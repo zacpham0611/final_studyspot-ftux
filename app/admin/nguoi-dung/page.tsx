@@ -9,15 +9,17 @@ import { Lock, Unlock, Shield, User, Loader2 } from 'lucide-react';
 
 export default function AdminUsersPage() {
   const { showToast } = useToast();
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Instant render from store cache if available
+  const [users, setUsers] = useState<UserProfile[]>(() => store.getAllUsers());
+  const [loading, setLoading] = useState(() => store.getAllUsers().length === 0);
 
   const loadData = async () => {
     try {
       // 1. Fetch live user list directly from Supabase Database (public.users)
+      // Only select required columns for minimal payload & faster query
       const { data: dbUsers, error } = await supabase
         .from('users')
-        .select('*')
+        .select('id, full_name, email, avatar_url, role, is_locked, created_at')
         .order('created_at', { ascending: false });
 
       if (!error && dbUsers && dbUsers.length > 0) {
@@ -39,39 +41,50 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => {
-    const init = async () => {
-      setLoading(true);
-      await loadData();
-      setLoading(false);
+    let isMounted = true;
+    loadData().finally(() => {
+      if (isMounted) setLoading(false);
+    });
+    return () => {
+      isMounted = false;
     };
-    init();
   }, []);
 
   const handleToggleLock = async (userId: string, currentLocked: boolean) => {
     const targetStatus = !currentLocked;
 
+    // 1. Optimistic UI update (Instant 0ms feedback)
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, is_locked: targetStatus } : u))
+    );
+    store.toggleLockUser(userId);
+
+    showToast(
+      targetStatus
+        ? 'Đã khóa tài khoản người dùng trên hệ thống!'
+        : 'Đã mở khóa tài khoản thành công!',
+      'info'
+    );
+
     try {
-      // 1. Update directly in Supabase Database (public.users)
+      // 2. Direct single-record UPDATE in Supabase Database (public.users)
       const { error } = await supabase
         .from('users')
         .update({ is_locked: targetStatus })
         .eq('id', userId);
 
       if (error) {
-        console.warn('Supabase user lock update warning:', error.message);
+        throw error;
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Supabase lock error:', e);
+      // Rollback optimistic update on failure
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, is_locked: currentLocked } : u))
+      );
+      store.toggleLockUser(userId);
+      showToast('Không thể cập nhật trạng thái trong cơ sở dữ liệu. Vui lòng thử lại!', 'error');
     }
-
-    // 2. Sync with local client store & state
-    store.toggleLockUser(userId);
-    await loadData();
-
-    showToast(
-      currentLocked ? 'Đã mở khóa tài khoản thành công!' : 'Đã khóa tài khoản người dùng trên hệ thống!',
-      'info'
-    );
   };
 
   return (

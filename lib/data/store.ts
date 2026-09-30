@@ -207,16 +207,20 @@ class StudySpotStore {
   async loadFromSupabase() {
     if (typeof window === 'undefined') return;
     try {
-      // 1. Sync users from Supabase
-      const { data: dbUsers } = await supabase.from('users').select('*');
-      if (dbUsers && dbUsers.length > 0) {
-        this.users = dbUsers;
+      // Parallelize queries across all 4 tables in a single roundtrip batch
+      const [usersRes, placesRes, reviewsRes, checkinsRes] = await Promise.all([
+        supabase.from('users').select('*'),
+        supabase.from('places').select('*'),
+        supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
+        supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
+      ]);
+
+      if (usersRes.data && usersRes.data.length > 0) {
+        this.users = usersRes.data;
       }
 
-      // 2. Sync places from Supabase
-      const { data: dbPlaces } = await supabase.from('places').select('*');
-      if (dbPlaces && dbPlaces.length > 0) {
-        this.places = dbPlaces.map((dp: any) => ({
+      if (placesRes.data && placesRes.data.length > 0) {
+        this.places = placesRes.data.map((dp: any) => ({
           ...dp,
           opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours),
           price_level: dp.price_level || 2,
@@ -225,16 +229,12 @@ class StudySpotStore {
         }));
       }
 
-      // 3. Sync reviews from Supabase
-      const { data: dbReviews } = await supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false });
-      if (dbReviews && dbReviews.length > 0) {
-        this.reviews = dbReviews;
+      if (reviewsRes.data && reviewsRes.data.length > 0) {
+        this.reviews = reviewsRes.data;
       }
 
-      // 4. Sync checkins from Supabase
-      const { data: dbCheckins } = await supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false });
-      if (dbCheckins && dbCheckins.length > 0) {
-        this.checkins = dbCheckins;
+      if (checkinsRes.data && checkinsRes.data.length > 0) {
+        this.checkins = checkinsRes.data;
       }
 
       this.persist();

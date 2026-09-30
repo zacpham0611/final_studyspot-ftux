@@ -155,11 +155,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initAuth = async () => {
       setIsLoading(true);
       await refreshUser();
-      // Load Supabase Database places & reviews into store if connected
-      await store.loadFromSupabase().catch(() => {});
       if (mounted) {
         setIsLoading(false);
       }
+      // Load Supabase Database places & reviews into store asynchronously in the background
+      store.loadFromSupabase().catch(() => {});
     };
 
     initAuth();
