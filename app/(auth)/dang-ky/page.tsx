@@ -46,14 +46,14 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      // 2. Call Supabase Auth signUp
+      // 2. Call Supabase Auth signUp (role 'user' complies with Postgres check constraint in schema.sql)
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password: password,
         options: {
           data: {
             full_name: cleanFullName,
-            role: 'student',
+            role: 'user',
           },
         },
       });
@@ -70,30 +70,33 @@ export default function RegisterPage() {
 
       const userId = data?.user?.id || `user-${Date.now()}`;
 
-      // 3. Save to profiles and users tables (default role = 'student')
-      try {
-        await supabase.from('profiles').upsert({
-          id: userId,
-          email: cleanEmail,
-          full_name: cleanFullName,
-          role: 'student',
-          created_at: new Date().toISOString(),
-        });
-      } catch (profileErr) {
-        console.warn('Profiles table insert skipped or unavailable:', profileErr);
-      }
-
+      // 3. Save to Supabase users table (using client upsert + server-side sync endpoint)
       try {
         await supabase.from('users').upsert({
           id: userId,
           email: cleanEmail,
           full_name: cleanFullName,
-          role: 'student',
+          role: 'user',
           is_locked: false,
           created_at: new Date().toISOString(),
         });
       } catch (userErr) {
-        console.warn('Users table insert skipped or unavailable:', userErr);
+        console.warn('Users table client upsert notice:', userErr);
+      }
+
+      try {
+        await fetch('/api/user/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: userId,
+            email: cleanEmail,
+            full_name: cleanFullName,
+            role: 'user',
+          }),
+        });
+      } catch (syncErr) {
+        console.warn('User server sync notice:', syncErr);
       }
 
       // 4. Register in local store (for client persistence & instant login capability)

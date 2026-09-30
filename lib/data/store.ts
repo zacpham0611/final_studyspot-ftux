@@ -41,6 +41,24 @@ class StudySpotStore {
     'user-student-1': new Set(['p-1', 'p-3']),
   };
   private currentUser: UserProfile | null = null; // Default: Guest / Unauthenticated
+  private listeners: Set<() => void> = new Set();
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  notify() {
+    this.listeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (e) {
+        console.error('Store listener error:', e);
+      }
+    });
+  }
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -188,6 +206,7 @@ class StudySpotStore {
 
     this.users.push(newUser);
     this.persist();
+    this.notify();
     return { success: true, user: newUser };
   }
 
@@ -209,7 +228,7 @@ class StudySpotStore {
     try {
       // Parallelize queries across all 4 tables in a single roundtrip batch
       const [usersRes, placesRes, reviewsRes, checkinsRes] = await Promise.all([
-        supabase.from('users').select('*'),
+        supabase.from('users').select('*').order('created_at', { ascending: false }),
         supabase.from('places').select('*'),
         supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
         supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
@@ -238,6 +257,7 @@ class StudySpotStore {
       }
 
       this.persist();
+      this.notify();
     } catch (e) {
       console.warn('Supabase store load notice:', e);
     }
@@ -903,6 +923,7 @@ class StudySpotStore {
     if (u) {
       u.is_locked = isLocked;
       this.persist();
+      this.notify();
       return true;
     }
     return false;
@@ -913,9 +934,29 @@ class StudySpotStore {
     if (u) {
       u.is_locked = explicitStatus !== undefined ? explicitStatus : !u.is_locked;
       this.persist();
+      this.notify();
       return true;
     }
     return false;
+  }
+
+  syncUsersFromSupabase(dbUsers: UserProfile[]): void {
+    if (!dbUsers || dbUsers.length === 0) return;
+    this.users = dbUsers;
+    this.persist();
+    this.notify();
+  }
+
+  updateUserAvatar(userId: string, avatarUrl: string): void {
+    const idx = this.users.findIndex((u) => u.id === userId);
+    if (idx !== -1) {
+      this.users[idx].avatar_url = avatarUrl;
+    }
+    if (this.currentUser && this.currentUser.id === userId) {
+      this.currentUser.avatar_url = avatarUrl;
+    }
+    this.persist();
+    this.notify();
   }
 
   getAllReviewsAdmin(): Review[] {

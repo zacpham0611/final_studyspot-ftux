@@ -30,6 +30,8 @@ export default function AdminUsersPage() {
           review_count: allReviews.filter((r) => r.user_id === u.id).length,
         }));
         setUsers(enriched);
+        // Supabase is the ultimate source of truth:
+        store.syncUsersFromSupabase(dbUsers);
         return;
       }
     } catch (e) {
@@ -45,8 +47,40 @@ export default function AdminUsersPage() {
     loadData().finally(() => {
       if (isMounted) setLoading(false);
     });
+
+    // 1. Listen to store updates (e.g. background loadFromSupabase, local signups)
+    const unsubscribeStore = store.subscribe(() => {
+      if (isMounted) {
+        loadData();
+      }
+    });
+
+    // 2. Realtime listener for cross-device signups on public.users
+    const channel = supabase
+      .channel('admin-users-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        () => {
+          if (isMounted) {
+            loadData();
+          }
+        }
+      )
+      .subscribe();
+
+    // 3. Fallback interval polling every 8s for cross-device updates if realtime is disconnected
+    const pollTimer = setInterval(() => {
+      if (isMounted) {
+        loadData();
+      }
+    }, 8000);
+
     return () => {
       isMounted = false;
+      unsubscribeStore();
+      supabase.removeChannel(channel);
+      clearInterval(pollTimer);
     };
   }, []);
 
