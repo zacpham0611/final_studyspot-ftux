@@ -39,7 +39,7 @@ export function CheckinModal({
 
     setIsSubmitting(true);
 
-    const result = store.addCheckin(placeId, level, note.trim());
+    const result = store.addCheckin(placeId, level, note.trim(), user || undefined);
     setIsSubmitting(false);
 
     if (result.success) {

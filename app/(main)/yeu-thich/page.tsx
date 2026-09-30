@@ -6,17 +6,22 @@ import { store } from '@/lib/data/store';
 import { Place } from '@/lib/types/database';
 import { PlaceCard } from '@/components/place/PlaceCard';
 import { Heart, Compass, ArrowLeft } from 'lucide-react';
+import { AuthGuard } from '@/components/auth/AuthGuard';
+import { useAuth } from '@/components/auth/AuthContext';
 
-export default function FavoritesPage() {
+function FavoritesContent() {
+  const { user } = useAuth();
   const [favorites, setFavorites] = useState<Place[]>([]);
 
   const loadFavorites = () => {
-    setFavorites(store.getUserFavorites());
+    if (user) {
+      setFavorites(store.getUserFavorites(user.id));
+    }
   };
 
   useEffect(() => {
     loadFavorites();
-  }, []);
+  }, [user]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6 pb-24 md:pb-12">
@@ -64,5 +69,13 @@ export default function FavoritesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function FavoritesPage() {
+  return (
+    <AuthGuard>
+      <FavoritesContent />
+    </AuthGuard>
   );
 }

@@ -25,8 +25,9 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/components/auth/AuthContext';
+import { AuthGuard } from '@/components/auth/AuthGuard';
 
-export default function ProfilePage() {
+function ProfileContent() {
   const router = useRouter();
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -213,18 +214,7 @@ export default function ProfilePage() {
   };
 
   if (!currentUser) {
-    return (
-      <div className="max-w-md mx-auto px-4 py-16 text-center space-y-4">
-        <User className="w-12 h-12 text-gray-400 mx-auto" />
-        <h2 className="text-xl font-bold">Vui lòng đăng nhập</h2>
-        <Link
-          href="/dang-nhap"
-          className="inline-block px-4 py-2 rounded-xl bg-burgundy text-white font-bold text-xs"
-        >
-          Đến trang đăng nhập
-        </Link>
-      </div>
-    );
+    return null;
   }
 
   const displayedAvatar =
@@ -515,5 +505,13 @@ export default function ProfilePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ProfilePage() {
+  return (
+    <AuthGuard>
+      <ProfileContent />
+    </AuthGuard>
   );
 }

@@ -120,26 +120,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // If no Supabase auth session, check persistent client store
-      const localUser = store.getCurrentUser();
-      if (localUser && localUser.email && !localUser.is_locked) {
-        setUser(localUser);
-        syncCookies(localUser);
-        return localUser;
-      }
-
-      // Default state: Guest / Unauthenticated
+      // If no active Supabase auth session -> Unauthenticated Guest
+      store.setCurrentUser(null);
       setUser(null);
       syncCookies(null);
       return null;
     } catch (e) {
       console.warn('Auth refresh warning:', e);
-      const localUser = store.getCurrentUser();
-      if (localUser && !localUser.is_locked) {
-        setUser(localUser);
-        syncCookies(localUser);
-        return localUser;
-      }
+      store.setCurrentUser(null);
       setUser(null);
       syncCookies(null);
       return null;
@@ -165,15 +153,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen to Supabase auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-        store.logout();
+        store.setCurrentUser(null);
         setUser(null);
         syncCookies(null);
-        setIsLoading(false);
-      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (mounted) setIsLoading(false);
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         if (session?.user) {
           await refreshUser();
-          setIsLoading(false);
         }
+        if (mounted) setIsLoading(false);
       }
     });
 

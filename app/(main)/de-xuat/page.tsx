@@ -7,15 +7,19 @@ import { store } from '@/lib/data/store';
 import { FTU_COORDINATES } from '@/lib/utils/distance';
 import { useToast } from '@/components/common/Toast';
 import { PlusCircle, MapPin, Sparkles, Clock, Tag } from 'lucide-react';
+import { useAuth } from '@/components/auth/AuthContext';
+import { AuthGuard } from '@/components/auth/AuthGuard';
+import { supabase } from '@/lib/supabase/client';
 
 const MapPinPicker = dynamic(() => import('@/components/map/MapPinPicker'), {
   ssr: false,
   loading: () => <div className="h-64 bg-slate-100 rounded-xl animate-pulse"></div>,
 });
 
-export default function SuggestPlacePage() {
+function SuggestPlaceContent() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { user } = useAuth();
 
   const [name, setName] = useState('');
   const [categoryId, setCategoryId] = useState(1);
@@ -39,7 +43,7 @@ export default function SuggestPlacePage() {
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !address.trim()) {
       showToast('Vui lòng điền đầy đủ tên và địa chỉ quán', 'error');
@@ -50,7 +54,7 @@ export default function SuggestPlacePage() {
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
 
-    const newPlace = store.proposePlace({
+    const placeData = {
       name: name.trim(),
       category_id: categoryId,
       address: address.trim(),
@@ -71,7 +75,22 @@ export default function SuggestPlacePage() {
         ? [imageUrl.trim()]
         : ['https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1000&q=80'],
       amenities: chosenAmenities,
-    });
+    };
+
+    if (user?.id) {
+      try {
+        await supabase.from('places').insert({
+          ...placeData,
+          status: 'pending',
+          created_by: user.id,
+          opening_hours: JSON.stringify(placeData.opening_hours),
+        });
+      } catch (e) {
+        console.warn('Supabase place proposal notice:', e);
+      }
+    }
+
+    const newPlace = store.proposePlace(placeData, user || undefined);
 
     setSubmitting(false);
     showToast(
@@ -253,5 +272,13 @@ export default function SuggestPlacePage() {
         </div>
       </form>
     </div>
+  );
+}
+
+export default function SuggestPlacePage() {
+  return (
+    <AuthGuard>
+      <SuggestPlaceContent />
+    </AuthGuard>
   );
 }

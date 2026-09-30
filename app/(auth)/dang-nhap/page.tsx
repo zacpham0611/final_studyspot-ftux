@@ -16,6 +16,17 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('locked') === '1') {
+        const msg = 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.';
+        setErrorMessage(msg);
+        showToast(msg, 'error');
+      }
+    }
+  }, [showToast]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -37,11 +48,22 @@ export default function LoginPage() {
       'success'
     );
 
-    // Role-based routing: Admin -> /admin, Student -> /
+    const sp = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const redirectParam = sp?.get('redirect');
+
+    // Role-based routing: Admin -> /admin, Student -> redirectParam or /
     if (res.role === 'admin') {
-      router.push('/admin');
+      if (redirectParam && redirectParam.startsWith('/admin')) {
+        router.push(redirectParam);
+      } else {
+        router.push('/admin');
+      }
     } else {
-      router.push('/');
+      if (redirectParam && !redirectParam.startsWith('/admin')) {
+        router.push(redirectParam);
+      } else {
+        router.push('/');
+      }
     }
   };
 

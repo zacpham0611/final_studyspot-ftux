@@ -77,14 +77,10 @@ class StudySpotStore {
 
         const storedUser = localStorage.getItem('studyspot_current_user_v2');
         if (storedUser) {
-          this.currentUser = JSON.parse(storedUser);
-          if (this.currentUser) {
-            if (this.currentUser.email === 'admin123@ftu.edu.vn') {
-              this.currentUser.role = 'admin';
-            }
-            const role = this.currentUser.role || 'user';
-            document.cookie = `studyspot_role=${role}; path=/; max-age=604800; SameSite=Lax`;
-            document.cookie = `studyspot_user_email=${this.currentUser.email}; path=/; max-age=604800; SameSite=Lax`;
+          try {
+            this.currentUser = JSON.parse(storedUser);
+          } catch (e) {
+            this.currentUser = null;
           }
         }
       } catch (e) {
@@ -111,17 +107,9 @@ class StudySpotStore {
         localStorage.setItem('studyspot_favs_v2', JSON.stringify(favsObj));
 
         if (this.currentUser) {
-          if (this.currentUser.email === 'admin123@ftu.edu.vn') {
-            this.currentUser.role = 'admin';
-          }
           localStorage.setItem('studyspot_current_user_v2', JSON.stringify(this.currentUser));
-          const role = this.currentUser.role || 'user';
-          document.cookie = `studyspot_role=${role}; path=/; max-age=604800; SameSite=Lax`;
-          document.cookie = `studyspot_user_email=${this.currentUser.email}; path=/; max-age=604800; SameSite=Lax`;
         } else {
           localStorage.removeItem('studyspot_current_user_v2');
-          document.cookie = 'studyspot_role=; path=/; max-age=0';
-          document.cookie = 'studyspot_user_email=; path=/; max-age=0';
         }
       } catch (e) {
         console.warn('LocalStorage save error:', e);
@@ -419,21 +407,22 @@ class StudySpotStore {
   }
 
   // --- Checkins ---
-  addCheckin(placeId: string, level: CrowdLevel, note?: string): { success: boolean; message: string; checkin?: Checkin } {
-    if (!this.currentUser) {
+  addCheckin(placeId: string, level: CrowdLevel, note?: string, userOverride?: UserProfile): { success: boolean; message: string; checkin?: Checkin } {
+    const user = userOverride || this.currentUser;
+    if (!user) {
       return {
         success: false,
         message: 'Vui lòng đăng nhập để check-in báo độ đông!',
       };
     }
-    if (this.currentUser.is_locked) {
+    if (user.is_locked) {
       return {
         success: false,
         message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.',
       };
     }
 
-    const userId = this.currentUser.id;
+    const userId = user.id;
     const thirtyMinsAgo = Date.now() - 30 * 60 * 1000;
 
     const recent = this.checkins.find(
@@ -455,8 +444,8 @@ class StudySpotStore {
       note,
       created_at: new Date().toISOString(),
       user: {
-        full_name: this.currentUser.full_name || 'Sinh viên FTU',
-        avatar_url: this.currentUser.avatar_url,
+        full_name: user.full_name || 'Sinh viên FTU',
+        avatar_url: user.avatar_url,
       },
     };
 
@@ -758,13 +747,13 @@ class StudySpotStore {
   }
 
   // --- Favorites ---
-  isFavorite(placeId: string): boolean {
-    const userId = this.currentUser?.id || 'guest';
+  isFavorite(placeId: string, userIdOverride?: string): boolean {
+    const userId = userIdOverride || this.currentUser?.id || 'guest';
     return !!this.favorites[userId]?.has(placeId);
   }
 
-  toggleFavorite(placeId: string): boolean {
-    const userId = this.currentUser?.id || 'guest';
+  toggleFavorite(placeId: string, userIdOverride?: string): boolean {
+    const userId = userIdOverride || this.currentUser?.id || 'guest';
     if (!this.favorites[userId]) {
       this.favorites[userId] = new Set();
     }
@@ -781,15 +770,16 @@ class StudySpotStore {
     return isNowFav;
   }
 
-  getUserFavorites(): Place[] {
-    const userId = this.currentUser?.id || 'guest';
+  getUserFavorites(userIdOverride?: string): Place[] {
+    const userId = userIdOverride || this.currentUser?.id || 'guest';
     const favIds = this.favorites[userId] || new Set();
     const enriched = this.getEnrichedPlaces();
     return enriched.filter((p) => favIds.has(p.id));
   }
 
   // --- Place Proposals & Admin Review ---
-  proposePlace(placeData: Partial<Place>): Place {
+  proposePlace(placeData: Partial<Place>, userOverride?: UserProfile): Place {
+    const user = userOverride || this.currentUser;
     const newPlace: Place = {
       id: `p-${Date.now()}`,
       name: placeData.name || 'Địa điểm mới',
@@ -807,7 +797,7 @@ class StudySpotStore {
         : ['https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1000&q=80'],
       status: 'pending',
       view_count: 0,
-      created_by: this.currentUser?.id,
+      created_by: user?.id,
       created_at: new Date().toISOString(),
       amenities: placeData.amenities || [],
     };

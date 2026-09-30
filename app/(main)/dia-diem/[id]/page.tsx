@@ -100,14 +100,14 @@ export default function PlaceDetailPage() {
     }
 
     setCheckins(store.getCheckinsForPlace(placeId));
-    setIsFavorite(store.isFavorite(placeId));
+    setIsFavorite(store.isFavorite(placeId, currentUser?.id));
     setSimilarPlaces(store.getSimilarPlaces(placeId, 3));
   };
 
   useEffect(() => {
     store.incrementView(placeId);
     refreshData();
-  }, [placeId]);
+  }, [placeId, currentUser]);
 
   if (!place) {
     return (
@@ -127,12 +127,35 @@ export default function PlaceDetailPage() {
 
   // Favorite toggle
   const handleToggleFavorite = () => {
-    const nextState = store.toggleFavorite(place.id);
+    if (!currentUser) {
+      showToast('Vui lòng đăng nhập để lưu địa điểm yêu thích!', 'info');
+      router.push(`/dang-nhap?redirect=/dia-diem/${placeId}`);
+      return;
+    }
+    const nextState = store.toggleFavorite(place.id, currentUser.id);
     setIsFavorite(nextState);
     showToast(
       nextState ? `Đã lưu "${place.name}" vào danh sách yêu thích!` : `Đã bỏ lưu "${place.name}"`,
       'info'
     );
+  };
+
+  const handleOpenCheckin = () => {
+    if (!currentUser) {
+      showToast('Vui lòng đăng nhập để báo độ đông (check-in)!', 'info');
+      router.push(`/dang-nhap?redirect=/dia-diem/${placeId}`);
+      return;
+    }
+    setIsCheckinOpen(true);
+  };
+
+  const handleOpenReview = () => {
+    if (!currentUser) {
+      showToast('Vui lòng đăng nhập để viết đánh giá!', 'info');
+      router.push(`/dang-nhap?redirect=/dia-diem/${placeId}`);
+      return;
+    }
+    setIsReviewOpen(true);
   };
 
   // Share handler
@@ -327,14 +350,14 @@ export default function PlaceDetailPage() {
         {/* Action Buttons Column */}
         <div className="flex flex-wrap sm:flex-nowrap lg:flex-col gap-2.5 flex-shrink-0">
           <button
-            onClick={() => setIsCheckinOpen(true)}
+            onClick={handleOpenCheckin}
             className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-burgundy text-white font-bold text-sm hover:bg-burgundy-hover transition-colors shadow-sm"
           >
             <Users className="w-4 h-4" /> Báo độ đông (Check-in)
           </button>
 
           <button
-            onClick={() => setIsReviewOpen(true)}
+            onClick={handleOpenReview}
             className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-burgundy text-burgundy font-bold text-sm hover:bg-burgundy-light transition-colors"
           >
             <MessageSquarePlus className="w-4 h-4" /> Viết đánh giá
@@ -422,7 +445,7 @@ export default function PlaceDetailPage() {
                 </p>
               </div>
               <button
-                onClick={() => setIsReviewOpen(true)}
+                onClick={handleOpenReview}
                 className="px-3.5 py-1.5 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover transition-colors"
               >
                 + Viết đánh giá
