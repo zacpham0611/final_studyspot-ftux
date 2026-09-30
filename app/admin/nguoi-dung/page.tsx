@@ -50,40 +50,55 @@ export default function AdminUsersPage() {
     };
   }, []);
 
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
+
   const handleToggleLock = async (userId: string, currentLocked: boolean) => {
+    // Prevent duplicate clicks or concurrent requests on the same user
+    if (togglingUserId === userId) return;
+
     const targetStatus = !currentLocked;
+    setTogglingUserId(userId);
 
     // 1. Optimistic UI update (Instant 0ms feedback)
     setUsers((prev) =>
       prev.map((u) => (u.id === userId ? { ...u, is_locked: targetStatus } : u))
     );
-    store.toggleLockUser(userId);
-
-    showToast(
-      targetStatus
-        ? 'Đã khóa tài khoản người dùng trên hệ thống!'
-        : 'Đã mở khóa tài khoản thành công!',
-      'info'
-    );
+    store.setUserLocked(userId, targetStatus);
 
     try {
-      // 2. Direct single-record UPDATE in Supabase Database (public.users)
-      const { error } = await supabase
-        .from('users')
-        .update({ is_locked: targetStatus })
-        .eq('id', userId);
+      // 2. Direct UPDATE via secure Server API
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, isLocked: targetStatus }),
+      });
 
-      if (error) {
-        throw error;
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Lỗi cập nhật người dùng từ máy chủ');
       }
+
+      // 3. Success: Show ONLY ONE toast AFTER operation succeeds
+      showToast(
+        targetStatus
+          ? 'Đã khóa tài khoản người dùng trên hệ thống!'
+          : 'Đã mở khóa tài khoản thành công!',
+        'info'
+      );
     } catch (e: any) {
       console.warn('Supabase lock error:', e);
-      // Rollback optimistic update on failure
+      // 4. Rollback optimistic update on failure
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, is_locked: currentLocked } : u))
       );
-      store.toggleLockUser(userId);
+      store.setUserLocked(userId, currentLocked);
+
+      // Show ONLY ONE error toast on failure
       showToast('Không thể cập nhật trạng thái trong cơ sở dữ liệu. Vui lòng thử lại!', 'error');
+    } finally {
+      setTogglingUserId(null);
     }
   };
 
@@ -155,14 +170,22 @@ export default function AdminUsersPage() {
                     <td className="py-3 px-4 text-right">
                       {u.role !== 'admin' && (
                         <button
+                          disabled={togglingUserId === u.id}
                           onClick={() => handleToggleLock(u.id, u.is_locked)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                             u.is_locked
                               ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
                               : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
                           }`}
                         >
-                          {u.is_locked ? 'Mở khóa' : 'Khóa nick'}
+                          {togglingUserId === u.id ? (
+                            <span className="flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              {u.is_locked ? 'Đang mở...' : 'Đang khóa...'}
+                            </span>
+                          ) : (
+                            u.is_locked ? 'Mở khóa' : 'Khóa nick'
+                          )}
                         </button>
                       )}
                     </td>

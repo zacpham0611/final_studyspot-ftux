@@ -898,14 +898,21 @@ class StudySpotStore {
     }));
   }
 
-  toggleLockUser(userId: string): boolean {
+  setUserLocked(userId: string, isLocked: boolean): boolean {
     const u = this.users.find((x) => x.id === userId);
     if (u) {
-      u.is_locked = !u.is_locked;
+      u.is_locked = isLocked;
       this.persist();
-      try {
-        supabase.from('users').update({ is_locked: u.is_locked }).eq('id', userId).then();
-      } catch (e) {}
+      return true;
+    }
+    return false;
+  }
+
+  toggleLockUser(userId: string, explicitStatus?: boolean): boolean {
+    const u = this.users.find((x) => x.id === userId);
+    if (u) {
+      u.is_locked = explicitStatus !== undefined ? explicitStatus : !u.is_locked;
+      this.persist();
       return true;
     }
     return false;

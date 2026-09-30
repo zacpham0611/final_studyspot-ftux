@@ -96,15 +96,27 @@ export async function middleware(request: NextRequest) {
     response.cookies.set('studyspot_role', isAdmin ? 'admin' : (userDbRole || 'student'), { path: '/', maxAge: 604800, sameSite: 'lax' });
   }
 
-  // 2. Protect Admin routes (/admin/*)
-  if (pathname.startsWith('/admin')) {
+  // 2. Protect Admin routes (/admin/* and /api/admin/*)
+  if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
     if (!isAuthenticated) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { success: false, error: 'Yêu cầu đăng nhập tài khoản Quản trị viên.' },
+          { status: 401 }
+        );
+      }
       const loginUrl = new URL('/dang-nhap', request.url);
       loginUrl.searchParams.set('redirect', pathname);
       return NextResponse.redirect(loginUrl);
     }
 
     if (!isAdmin) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { success: false, error: 'Từ chối truy cập: Chỉ Quản trị viên mới có quyền thực hiện thao tác này.' },
+          { status: 403 }
+        );
+      }
       const homeUrl = new URL('/', request.url);
       homeUrl.searchParams.set('denied', '1');
       return NextResponse.redirect(homeUrl);
