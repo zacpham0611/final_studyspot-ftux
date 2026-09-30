@@ -4,6 +4,7 @@ import './globals.css';
 import { Header } from '@/components/common/Header';
 import { BottomNav } from '@/components/common/BottomNav';
 import { ToastProvider } from '@/components/common/Toast';
+import { AuthProvider } from '@/components/auth/AuthContext';
 
 export const metadata: Metadata = {
   title: 'STUDYSPOT FTU - Bản đồ địa điểm học tập quanh ĐH Ngoại thương',
@@ -18,11 +19,13 @@ export default function RootLayout({
   return (
     <html lang="vi">
       <body className="min-h-screen flex flex-col bg-page">
-        <ToastProvider>
-          <Header />
-          <main className="flex-1 flex flex-col">{children}</main>
-          <BottomNav />
-        </ToastProvider>
+        <AuthProvider>
+          <ToastProvider>
+            <Header />
+            <main className="flex-1 flex flex-col">{children}</main>
+            <BottomNav />
+          </ToastProvider>
+        </AuthProvider>
       </body>
     </html>
   );

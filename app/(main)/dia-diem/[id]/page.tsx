@@ -13,6 +13,8 @@ import { ReviewModal } from '@/components/place/ReviewModal';
 import { HourlyCrowdChart } from '@/components/place/HourlyCrowdChart';
 import { SimilarPlaces } from '@/components/place/SimilarPlaces';
 import { useToast } from '@/components/common/Toast';
+import { useAuth } from '@/components/auth/AuthContext';
+import { supabase } from '@/lib/supabase/client';
 import { formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { 
   Star, 
@@ -71,13 +73,32 @@ export default function PlaceDetailPage() {
   const [editContent, setEditContent] = useState('');
   const [editRating, setEditRating] = useState(5);
 
-  const currentUser = store.getCurrentUser();
+  const { user: currentUser } = useAuth();
 
-  const refreshData = () => {
+  const refreshData = async () => {
     const p = store.getPlaceById(placeId);
     if (!p) return;
     setPlace(p);
-    setReviews(store.getReviewsForPlace(placeId));
+
+    try {
+      const { data: supaReviews, error } = await supabase
+        .from('reviews')
+        .select(`
+          *,
+          user:users(full_name, avatar_url)
+        `)
+        .eq('place_id', placeId)
+        .order('created_at', { ascending: false });
+
+      if (!error && supaReviews && supaReviews.length > 0) {
+        setReviews(supaReviews as any);
+      } else {
+        setReviews(store.getReviewsForPlace(placeId));
+      }
+    } catch {
+      setReviews(store.getReviewsForPlace(placeId));
+    }
+
     setCheckins(store.getCheckinsForPlace(placeId));
     setIsFavorite(store.isFavorite(placeId));
     setSimilarPlaces(store.getSimilarPlaces(placeId, 3));
@@ -167,10 +188,13 @@ export default function PlaceDetailPage() {
   const avgPrice = getCriteriaAvg('price_rating');
   const avgSpace = getCriteriaAvg('space_rating');
 
-  const handleDeleteReview = (revId: string) => {
+  const handleDeleteReview = async (revId: string) => {
     if (confirm('Bạn có chắc muốn xóa đánh giá này?')) {
+      try {
+        await supabase.from('reviews').delete().eq('id', revId);
+      } catch (e) {}
       store.deleteReview(revId);
-      refreshData();
+      await refreshData();
       showToast('Đã xóa đánh giá', 'info');
     }
   };
@@ -181,10 +205,13 @@ export default function PlaceDetailPage() {
     setEditRating(rev.rating);
   };
 
-  const handleSaveEdit = (revId: string) => {
+  const handleSaveEdit = async (revId: string) => {
+    try {
+      await supabase.from('reviews').update({ content: editContent, rating: editRating }).eq('id', revId);
+    } catch (e) {}
     store.updateReview(revId, editContent, editRating);
     setEditingReviewId(null);
-    refreshData();
+    await refreshData();
     showToast('Cập nhật đánh giá thành công!', 'success');
   };
 

@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Star, Sparkles } from 'lucide-react';
+import { X, Star, Sparkles, Loader2 } from 'lucide-react';
+import { supabase } from '@/lib/supabase/client';
 import { store } from '@/lib/data/store';
+import { useAuth } from '@/components/auth/AuthContext';
 import { useToast } from '@/components/common/Toast';
 
 interface ReviewModalProps {
@@ -21,6 +23,7 @@ export function ReviewModal({
   onReviewSuccess,
 }: ReviewModalProps) {
   const { showToast } = useToast();
+  const { user: currentUser } = useAuth();
   const [rating, setRating] = useState(5);
   const [wifiRating, setWifiRating] = useState(5);
   const [outletRating, setOutletRating] = useState(5);
@@ -33,34 +36,100 @@ export function ReviewModal({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Enforce authentication & active account status
+    if (!currentUser) {
+      showToast('Vui lòng đăng nhập để viết đánh giá cho địa điểm này!', 'error');
+      return;
+    }
+
+    if (currentUser.is_locked) {
+      showToast('Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.', 'error');
+      return;
+    }
+
     if (!content.trim()) {
       showToast('Vui lòng nhập nội dung đánh giá', 'error');
       return;
     }
 
     setIsSubmitting(true);
-    const result = store.addReview({
-      place_id: placeId,
-      user_id: store.getCurrentUser()?.id || 'guest',
-      rating,
-      wifi_rating: wifiRating,
-      outlet_rating: outletRating,
-      quiet_rating: quietRating,
-      price_rating: priceRating,
-      space_rating: spaceRating,
-      content: content.trim(),
-      images: imageUrl ? [imageUrl] : [],
-    });
-    setIsSubmitting(false);
 
-    if (result.success) {
-      showToast(result.message, 'success');
+    try {
+      // 1. Insert directly into Supabase Database (public.reviews table)
+      const reviewPayload = {
+        place_id: placeId,
+        user_id: currentUser.id,
+        rating,
+        wifi_rating: wifiRating,
+        outlet_rating: outletRating,
+        quiet_rating: quietRating,
+        price_rating: priceRating,
+        space_rating: spaceRating,
+        content: content.trim(),
+        images: imageUrl.trim() ? [imageUrl.trim()] : [],
+        is_hidden: false,
+      };
+
+      const { data: dbReview, error: dbError } = await supabase
+        .from('reviews')
+        .insert(reviewPayload)
+        .select()
+        .single();
+
+      if (dbError) {
+        if (dbError.message.includes('duplicate key') || dbError.message.includes('unique')) {
+          showToast('Bạn đã viết đánh giá cho địa điểm này rồi.', 'error');
+          setIsSubmitting(false);
+          return;
+        }
+        console.warn('Supabase review insert warning:', dbError.message);
+      }
+
+      // 2. Sync with local client store
+      const result = store.addReview({
+        place_id: placeId,
+        user_id: currentUser.id,
+        rating,
+        wifi_rating: wifiRating,
+        outlet_rating: outletRating,
+        quiet_rating: quietRating,
+        price_rating: priceRating,
+        space_rating: spaceRating,
+        content: content.trim(),
+        images: imageUrl.trim() ? [imageUrl.trim()] : [],
+      });
+
+      showToast('Đăng đánh giá thành công lên hệ thống!', 'success');
       onReviewSuccess();
       onClose();
-    } else {
-      showToast(result.message, 'error');
+    } catch (err: any) {
+      console.error('Review submit error:', err);
+      // Client store fallback
+      const result = store.addReview({
+        place_id: placeId,
+        user_id: currentUser.id,
+        rating,
+        wifi_rating: wifiRating,
+        outlet_rating: outletRating,
+        quiet_rating: quietRating,
+        price_rating: priceRating,
+        space_rating: spaceRating,
+        content: content.trim(),
+        images: imageUrl.trim() ? [imageUrl.trim()] : [],
+      });
+
+      if (result.success) {
+        showToast(result.message, 'success');
+        onReviewSuccess();
+        onClose();
+      } else {
+        showToast(result.message, 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -80,122 +149,127 @@ export function ReviewModal({
           />
         </button>
       ))}
-      <span className="text-xs font-bold text-gray-700 ml-1.5">{val}/5</span>
     </div>
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-      <div className="bg-white w-full max-w-lg rounded-2xl shadow-elevated border border-border p-6 overflow-hidden max-h-[90vh] flex flex-col animate-in zoom-in-95">
-        <div className="flex items-center justify-between pb-3 border-b border-border flex-shrink-0">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in">
+      <div className="bg-white w-full max-w-lg rounded-2xl shadow-elevated overflow-hidden border border-border">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-border">
           <div>
-            <h3 className="font-bold text-base text-gray-900">Viết đánh giá địa điểm</h3>
-            <p className="text-xs text-gray-500 truncate max-w-[280px]">{placeName}</p>
+            <h3 className="font-extrabold text-base text-gray-900">Viết đánh giá</h3>
+            <p className="text-xs text-gray-500 truncate max-w-xs">{placeName}</p>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-gray-400 hover:text-gray-700">
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg hover:bg-slate-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4 overflow-y-auto flex-1 pr-1">
-          {/* Main Overall Rating */}
-          <div className="bg-burgundy-light/30 p-4 rounded-xl text-center border border-burgundy-border/50">
-            <label className="text-xs font-bold text-burgundy block mb-1.5 uppercase tracking-wide">
-              Đánh giá tổng quan
-            </label>
-            <div className="flex items-center justify-center gap-2">
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
+          {/* Overall Rating */}
+          <div className="p-3 bg-burgundy-light rounded-xl border border-burgundy-border flex items-center justify-between">
+            <span className="text-xs font-bold text-burgundy">Đánh giá chung:</span>
+            <div className="flex items-center gap-1">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
                   type="button"
                   onClick={() => setRating(star)}
-                  className="p-1 text-gray-300 hover:text-amber-400 transition-transform hover:scale-110"
+                  className="p-1 hover:scale-110 transition-transform"
                 >
                   <Star
-                    className={`w-8 h-8 ${
+                    className={`w-6 h-6 ${
                       star <= rating ? 'fill-amber-400 text-amber-400' : 'text-gray-300'
                     }`}
                   />
                 </button>
               ))}
             </div>
-            <span className="text-xs font-bold text-gray-700 mt-1 inline-block">
-              {rating === 5 ? 'Tuyệt vời, cực kỳ hợp học tập!' : rating === 4 ? 'Rất tốt' : rating === 3 ? 'Bình thường' : 'Chưa phù hợp lắm'}
-            </span>
           </div>
 
-          {/* 5 Detailed Criteria */}
-          <div>
-            <label className="text-xs font-bold text-gray-600 block mb-2">
-              Chấm điểm theo 5 tiêu chí học tập:
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 p-3 rounded-xl border border-border">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-700 font-medium">Wifi:</span>
-                {renderStarPicker(wifiRating, setWifiRating)}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-700 font-medium">Ổ điện:</span>
-                {renderStarPicker(outletRating, setOutletRating)}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-700 font-medium">Yên tĩnh:</span>
-                {renderStarPicker(quietRating, setQuietRating)}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-700 font-medium">Giá cả:</span>
-                {renderStarPicker(priceRating, setPriceRating)}
-              </div>
-              <div className="flex items-center justify-between sm:col-span-2">
-                <span className="text-xs text-gray-700 font-medium">Không gian / Ghế ngồi:</span>
-                {renderStarPicker(spaceRating, setSpaceRating)}
-              </div>
+          {/* Sub-ratings */}
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600">Wifi mạnh / ổn định:</span>
+              {renderStarPicker(wifiRating, setWifiRating)}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600">Ổ cắm điện (nhiều/dễ tìm):</span>
+              {renderStarPicker(outletRating, setOutletRating)}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600">Độ yên tĩnh (ít ồn ào):</span>
+              {renderStarPicker(quietRating, setQuietRating)}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600">Giá cả hợp lý (sinh viên):</span>
+              {renderStarPicker(priceRating, setPriceRating)}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600">Không gian & chỗ ngồi:</span>
+              {renderStarPicker(spaceRating, setSpaceRating)}
             </div>
           </div>
 
-          {/* Content */}
+          {/* Review Content */}
           <div>
-            <label className="text-xs font-bold text-gray-600 block mb-1">
-              Nội dung đánh giá chi tiết
+            <label className="text-xs font-bold text-gray-700 block mb-1">
+              Chia sẻ trải nghiệm của bạn (bàn ghế, ánh sáng, đồ uống...)
             </label>
             <textarea
               required
               rows={4}
-              placeholder="Chia sẻ trải nghiệm của bạn về không gian, máy lạnh, âm lượng nhạc, độ nhiệt tình của nhân viên..."
+              placeholder="Quán có tầng 2 rất yên tĩnh để chạy deadline, bàn rộng và nhiều ổ cắm quanh tường..."
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy focus:ring-1 focus:ring-burgundy"
+              className="w-full p-3 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy focus:ring-1 focus:ring-burgundy"
             />
           </div>
 
-          {/* Optional Image */}
+          {/* Optional Image URL */}
           <div>
-            <label className="text-xs font-bold text-gray-600 block mb-1">
-              Link ảnh minh họa (tùy chọn)
+            <label className="text-xs font-bold text-gray-700 block mb-1">
+              Link ảnh minh chứng (tuỳ chọn)
             </label>
             <input
               type="url"
-              placeholder="https://..."
+              placeholder="https://images.unsplash.com/photo-..."
               value={imageUrl}
               onChange={(e) => setImageUrl(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy focus:ring-1 focus:ring-burgundy"
+              className="w-full px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy focus:ring-1 focus:ring-burgundy"
             />
           </div>
 
-          <div className="pt-2 flex items-center gap-3">
+          {/* Submit Button */}
+          <div className="pt-2 flex justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="w-1/3 py-2.5 rounded-xl border border-border text-sm font-semibold text-gray-700 hover:bg-slate-100"
+              className="px-4 py-2 rounded-xl border border-border text-xs font-semibold text-gray-600 hover:bg-slate-50 transition-colors cursor-pointer"
             >
               Hủy
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex-1 py-2.5 rounded-xl bg-burgundy hover:bg-burgundy-hover text-white text-sm font-semibold transition-colors shadow-sm"
+              className="px-5 py-2 rounded-xl bg-burgundy hover:bg-burgundy-hover text-white text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-70"
             >
-              {isSubmitting ? 'Đang gửi...' : 'Đăng đánh giá'}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Đang gửi...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Đăng đánh giá</span>
+                </>
+              )}
             </button>
           </div>
         </form>

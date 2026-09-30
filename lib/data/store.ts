@@ -25,6 +25,7 @@ import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { calculateDistance, formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { getOpeningStatus } from '@/lib/utils/hours';
 import { matchesSearch } from '@/lib/utils/text';
+import { supabase } from '@/lib/supabase/client';
 
 class StudySpotStore {
   private places: Place[] = [...INITIAL_PLACES];
@@ -39,7 +40,7 @@ class StudySpotStore {
   private favorites: { [userId: string]: Set<string> } = {
     'user-student-1': new Set(['p-1', 'p-3']),
   };
-  private currentUser: UserProfile | null = INITIAL_USERS[0]; // Default: admin123@ftu.edu.vn
+  private currentUser: UserProfile | null = null; // Default: Guest / Unauthenticated
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -202,19 +203,56 @@ class StudySpotStore {
     return { success: true, user: newUser };
   }
 
-  loginAs(role: 'user' | 'admin') {
-    if (role === 'admin') {
-      this.currentUser = INITIAL_USERS[0]; // admin123@ftu.edu.vn
-    } else {
-      this.currentUser = INITIAL_USERS[1]; // student
-    }
-    this.persist();
-    return this.currentUser;
-  }
-
   logout() {
     this.currentUser = null;
     this.persist();
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('studyspot_current_user_v2');
+      document.cookie = 'studyspot_role=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      document.cookie = 'studyspot_user_email=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      try {
+        supabase.auth.signOut().then();
+      } catch (e) {}
+    }
+  }
+
+  async loadFromSupabase() {
+    if (typeof window === 'undefined') return;
+    try {
+      // 1. Sync users from Supabase
+      const { data: dbUsers } = await supabase.from('users').select('*');
+      if (dbUsers && dbUsers.length > 0) {
+        this.users = dbUsers;
+      }
+
+      // 2. Sync places from Supabase
+      const { data: dbPlaces } = await supabase.from('places').select('*');
+      if (dbPlaces && dbPlaces.length > 0) {
+        this.places = dbPlaces.map((dp: any) => ({
+          ...dp,
+          opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours),
+          price_level: dp.price_level || 2,
+          images: dp.images || [],
+          view_count: dp.view_count || 0,
+        }));
+      }
+
+      // 3. Sync reviews from Supabase
+      const { data: dbReviews } = await supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false });
+      if (dbReviews && dbReviews.length > 0) {
+        this.reviews = dbReviews;
+      }
+
+      // 4. Sync checkins from Supabase
+      const { data: dbCheckins } = await supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false });
+      if (dbCheckins && dbCheckins.length > 0) {
+        this.checkins = dbCheckins;
+      }
+
+      this.persist();
+    } catch (e) {
+      console.warn('Supabase store load notice:', e);
+    }
   }
 
   // --- Places ---
@@ -382,7 +420,20 @@ class StudySpotStore {
 
   // --- Checkins ---
   addCheckin(placeId: string, level: CrowdLevel, note?: string): { success: boolean; message: string; checkin?: Checkin } {
-    const userId = this.currentUser?.id || 'guest';
+    if (!this.currentUser) {
+      return {
+        success: false,
+        message: 'Vui lòng đăng nhập để check-in báo độ đông!',
+      };
+    }
+    if (this.currentUser.is_locked) {
+      return {
+        success: false,
+        message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.',
+      };
+    }
+
+    const userId = this.currentUser.id;
     const thirtyMinsAgo = Date.now() - 30 * 60 * 1000;
 
     const recent = this.checkins.find(
@@ -404,13 +455,30 @@ class StudySpotStore {
       note,
       created_at: new Date().toISOString(),
       user: {
-        full_name: this.currentUser?.full_name || 'Sinh viên FTU',
-        avatar_url: this.currentUser?.avatar_url,
+        full_name: this.currentUser.full_name || 'Sinh viên FTU',
+        avatar_url: this.currentUser.avatar_url,
       },
     };
 
     this.checkins.unshift(newCheckin);
     this.persist();
+
+    // Persist directly to Supabase Database
+    try {
+      supabase.from('checkins').insert({
+        place_id: placeId,
+        user_id: userId,
+        level,
+        note: note ? note.slice(0, 100) : null,
+      }).select().single().then(({ data }) => {
+        if (data?.id) {
+          newCheckin.id = data.id;
+          this.persist();
+        }
+      });
+    } catch (e) {
+      console.warn('Supabase checkin insert notice:', e);
+    }
 
     return {
       success: true,
@@ -487,8 +555,21 @@ class StudySpotStore {
       });
   }
 
-  addReview(reviewData: Omit<Review, 'id' | 'created_at' | 'user' | 'is_hidden'>): { success: boolean; message: string; review?: Review } {
-    const userId = this.currentUser?.id || 'guest';
+  addReview(reviewData: Omit<Review, 'id' | 'created_at' | 'user' | 'is_hidden' | 'user_id'> & { user_id?: string }): { success: boolean; message: string; review?: Review } {
+    if (!this.currentUser && !reviewData.user_id) {
+      return {
+        success: false,
+        message: 'Vui lòng đăng nhập để viết đánh giá!',
+      };
+    }
+    if (this.currentUser?.is_locked) {
+      return {
+        success: false,
+        message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.',
+      };
+    }
+
+    const userId = reviewData.user_id || this.currentUser!.id;
     const existing = this.reviews.find((r) => r.place_id === reviewData.place_id && r.user_id === userId);
 
     if (existing) {
@@ -514,6 +595,30 @@ class StudySpotStore {
     this.reviews.unshift(newReview);
     this.persist();
 
+    // Persist directly to Supabase Database
+    try {
+      supabase.from('reviews').insert({
+        place_id: reviewData.place_id,
+        user_id: userId,
+        rating: reviewData.rating,
+        wifi_rating: reviewData.wifi_rating,
+        outlet_rating: reviewData.outlet_rating,
+        quiet_rating: reviewData.quiet_rating,
+        price_rating: reviewData.price_rating,
+        space_rating: reviewData.space_rating,
+        content: reviewData.content,
+        images: reviewData.images || [],
+        is_hidden: false,
+      }).select().single().then(({ data }) => {
+        if (data?.id) {
+          newReview.id = data.id;
+          this.persist();
+        }
+      });
+    } catch (e) {
+      console.warn('Supabase review insert notice:', e);
+    }
+
     return {
       success: true,
       message: 'Đăng đánh giá thành công!',
@@ -527,6 +632,9 @@ class StudySpotStore {
       rev.content = content;
       rev.rating = rating;
       this.persist();
+      try {
+        supabase.from('reviews').update({ content, rating }).eq('id', reviewId).then();
+      } catch (e) {}
       return true;
     }
     return false;
@@ -537,6 +645,9 @@ class StudySpotStore {
     if (idx !== -1) {
       this.reviews.splice(idx, 1);
       this.persist();
+      try {
+        supabase.from('reviews').delete().eq('id', reviewId).then();
+      } catch (e) {}
       return true;
     }
     return false;
@@ -802,6 +913,9 @@ class StudySpotStore {
     if (u) {
       u.is_locked = !u.is_locked;
       this.persist();
+      try {
+        supabase.from('users').update({ is_locked: u.is_locked }).eq('id', userId).then();
+      } catch (e) {}
       return true;
     }
     return false;
@@ -819,6 +933,9 @@ class StudySpotStore {
     if (r) {
       r.is_hidden = !r.is_hidden;
       this.persist();
+      try {
+        supabase.from('reviews').update({ is_hidden: r.is_hidden }).eq('id', reviewId).then();
+      } catch (e) {}
       return true;
     }
     return false;

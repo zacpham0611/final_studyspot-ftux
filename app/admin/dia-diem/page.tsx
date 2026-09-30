@@ -62,6 +62,7 @@ export default function AdminPlacesPage() {
 
   useEffect(() => {
     loadData();
+    store.loadFromSupabase().then(loadData);
   }, []);
 
   const handleToggleHide = (place: Place) => {

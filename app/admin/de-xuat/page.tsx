@@ -39,6 +39,7 @@ export default function AdminProposalsPage() {
 
   useEffect(() => {
     loadData();
+    store.loadFromSupabase().then(loadData);
   }, []);
 
   const handleApprove = (placeId: string, placeName: string) => {

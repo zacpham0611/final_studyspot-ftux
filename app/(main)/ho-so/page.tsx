@@ -24,12 +24,14 @@ import {
   Loader2
 } from 'lucide-react';
 
+import { useAuth } from '@/components/auth/AuthContext';
+
 export default function ProfilePage() {
   const router = useRouter();
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { user: currentUser, refreshUser } = useAuth();
 
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'reviews' | 'checkins' | 'proposals'>('reviews');
 
   // Stats
@@ -41,27 +43,64 @@ export default function ProfilePage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  const loadProfile = () => {
-    const user = store.getCurrentUser();
-    setCurrentUser(user);
+  // Edit Name State
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
 
-    if (user) {
-      // Find reviews by this user
-      const allReviews = store.getAllReviewsAdmin();
-      setMyReviews(allReviews.filter((r) => r.user_id === user.id));
+  const loadProfile = async () => {
+    if (!currentUser) return;
+    try {
+      // 1. Fetch live reviews by this user from Supabase
+      const { data: dbReviews } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
 
-      // Find proposals by this user
-      const allPlaces = store.getAllPlacesAdmin();
-      setMyProposals(allPlaces.filter((p) => p.created_by === user.id || p.id.startsWith('p-')));
+      if (dbReviews && dbReviews.length > 0) {
+        setMyReviews(dbReviews);
+      } else {
+        const allReviews = store.getAllReviewsAdmin();
+        setMyReviews(allReviews.filter((r) => r.user_id === currentUser.id));
+      }
 
-      // Checkins
-      setMyCheckins(store.getCheckinsForPlace('p-1')); // sample user checkins
+      // 2. Fetch live proposals by this user from Supabase
+      const { data: dbPlaces } = await supabase
+        .from('places')
+        .select('*')
+        .eq('created_by', currentUser.id)
+        .order('created_at', { ascending: false });
+
+      if (dbPlaces && dbPlaces.length > 0) {
+        setMyProposals(dbPlaces);
+      } else {
+        const allPlaces = store.getAllPlacesAdmin();
+        setMyProposals(allPlaces.filter((p) => p.created_by === currentUser.id));
+      }
+
+      // 3. Fetch checkins from Supabase
+      const { data: dbCheckins } = await supabase
+        .from('checkins')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
+
+      if (dbCheckins && dbCheckins.length > 0) {
+        setMyCheckins(dbCheckins);
+      } else {
+        setMyCheckins(store.getCheckinsForPlace('p-1'));
+      }
+    } catch (e) {
+      console.warn('Supabase profile load warning:', e);
     }
   };
 
   useEffect(() => {
-    loadProfile();
-  }, []);
+    if (currentUser) {
+      setNameInput(currentUser.full_name);
+      loadProfile();
+    }
+  }, [currentUser]);
 
   // Trigger file selection dialog
   const handleAvatarClick = () => {
@@ -157,13 +196,7 @@ export default function ProfilePage() {
           console.warn('Users table update notice:', dbErr);
         }
 
-        // 4. Update client store & component state
-        const updatedUser: UserProfile = {
-          ...currentUser,
-          avatar_url: finalAvatarUrl,
-        };
-        store.setCurrentUser(updatedUser);
-        setCurrentUser(updatedUser);
+        await refreshUser();
         setPreviewUrl(finalAvatarUrl);
 
         showToast('Cập nhật ảnh đại diện thành công!', 'success');

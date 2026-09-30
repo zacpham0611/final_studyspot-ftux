@@ -21,55 +21,20 @@ import {
   AlertTriangle
 } from 'lucide-react';
 
+import { useAuth } from '@/components/auth/AuthContext';
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user: currentUser, isLoading, isAdmin } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
-
   useEffect(() => {
-    const checkRole = async () => {
-      // 1. Check local store user
-      const localUser = store.getCurrentUser();
-      
-      if (localUser?.email?.toLowerCase() === ADMIN_EMAIL || localUser?.role === 'admin') {
-        if (localUser.role !== 'admin') {
-          localUser.role = 'admin';
-          store.setCurrentUser(localUser);
-        }
-        setCurrentUser(localUser);
-        setIsAdmin(true);
-        setLoading(false);
-        return;
-      }
-
-      // 2. Query Supabase users or profiles table directly
-      try {
-        if (supabase) {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user && user.email?.toLowerCase() === ADMIN_EMAIL) {
-            setIsAdmin(true);
-            setLoading(false);
-            return;
-          }
-        }
-      } catch (e) {
-        // Fallback
-      }
-
-      setCurrentUser(localUser);
-      setIsAdmin(false);
-      setLoading(false);
-      // Auto-redirect unauthorized users to home page
+    // Only redirect when authentication verification has completely finished
+    if (!isLoading && !isAdmin) {
       router.replace('/');
-    };
-
-    checkRole();
-  }, [pathname, router, ADMIN_EMAIL]);
+    }
+  }, [isLoading, isAdmin, router]);
 
   const navItems = [
     { label: 'Dashboard Tổng quan', href: '/admin', icon: LayoutDashboard },
@@ -80,7 +45,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { label: 'Danh mục & Tiện ích', href: '/admin/danh-muc', icon: Tags },
   ];
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8 min-h-[500px]">
         <div className="flex flex-col items-center gap-2 text-gray-500 text-xs">
@@ -91,7 +56,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  // If not admin, redirecting to home
+  // If not admin and not loading, redirecting to home
   if (!isAdmin) {
     return (
       <div className="flex-1 flex items-center justify-center p-8 min-h-[500px]">

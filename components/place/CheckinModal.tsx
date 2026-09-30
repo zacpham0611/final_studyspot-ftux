@@ -5,6 +5,7 @@ import { X, Users, AlertCircle } from 'lucide-react';
 import { CrowdLevel } from '@/lib/types/database';
 import { store } from '@/lib/data/store';
 import { useToast } from '@/components/common/Toast';
+import { useAuth } from '@/components/auth/AuthContext';
 
 interface CheckinModalProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export function CheckinModal({
   placeName,
   onCheckinSuccess,
 }: CheckinModalProps) {
+  const { user } = useAuth();
   const { showToast } = useToast();
   const [level, setLevel] = useState<CrowdLevel>(1);
   const [note, setNote] = useState('');
@@ -30,6 +32,11 @@ export function CheckinModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      showToast('Vui lòng đăng nhập để báo độ đông!', 'error');
+      return;
+    }
+
     setIsSubmitting(true);
 
     const result = store.addCheckin(placeId, level, note.trim());

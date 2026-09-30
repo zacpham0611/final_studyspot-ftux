@@ -19,33 +19,29 @@ import { store } from '@/lib/data/store';
 import { UserProfile, Notification } from '@/lib/types/database';
 import { useToast } from './Toast';
 import { NotificationDropdown } from './NotificationDropdown';
+import { useAuth } from '@/components/auth/AuthContext';
 
 export function Header() {
   const pathname = usePathname();
   const router = useRouter();
   const { showToast } = useToast();
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const { user: currentUser, logout, isAdmin } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const notifRef = useRef<HTMLDivElement>(null);
 
   const loadUserData = () => {
-    const user = store.getCurrentUser();
-    setCurrentUser(user);
-    if (user) {
-      setNotifications(store.getNotifications(user.id));
+    if (currentUser) {
+      setNotifications(store.getNotifications(currentUser.id));
     } else {
       setNotifications([]);
     }
   };
 
-  const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.email?.toLowerCase() === ADMIN_EMAIL;
-
   useEffect(() => {
     loadUserData();
-  }, [pathname]);
+  }, [pathname, currentUser]);
 
   // Click outside to close dropdowns
   useEffect(() => {
@@ -58,10 +54,9 @@ export function Header() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleLogout = () => {
-    store.logout();
-    setCurrentUser(null);
+  const handleLogout = async () => {
     setDropdownOpen(false);
+    await logout();
     showToast('Đã đăng xuất thành công', 'info');
     router.push('/');
   };

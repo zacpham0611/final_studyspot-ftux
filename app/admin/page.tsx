@@ -34,10 +34,15 @@ export default function AdminDashboardPage() {
   const [activityDays, setActivityDays] = useState<{ date: string; label: string; checkins: number; reviews: number }[]>([]);
 
   useEffect(() => {
-    setStats(store.getAdminStats());
-    setTopPlaces(store.getTopPlaces(5));
-    setActivityDays(store.getLast14DaysActivity());
-    setPendingList(store.getAllPlacesAdmin().filter((p) => p.status === 'pending'));
+    const updateStats = () => {
+      setStats(store.getAdminStats());
+      setTopPlaces(store.getTopPlaces(5));
+      setActivityDays(store.getLast14DaysActivity());
+      setPendingList(store.getAllPlacesAdmin().filter((p) => p.status === 'pending'));
+    };
+
+    updateStats();
+    store.loadFromSupabase().then(updateStats);
   }, []);
 
   // Compute max count for chart scaling

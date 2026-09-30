@@ -19,6 +19,7 @@ export default function AdminReviewsPage() {
 
   useEffect(() => {
     loadData();
+    store.loadFromSupabase().then(loadData);
   }, []);
 
   const handleToggleHide = (revId: string) => {
