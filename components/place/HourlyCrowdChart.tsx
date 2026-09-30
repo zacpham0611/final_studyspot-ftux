@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CrowdStatus } from '@/lib/types/database';
 import { Clock, Info, Edit3, Check, X, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/common/Toast';
@@ -26,6 +26,15 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Optimistic UI state: initialized from data prop
+  const [chartData, setChartData] = useState<HourlyData[]>(data);
+
+  // Sync internal chart data when external data changes
+  useEffect(() => {
+    setChartData(data);
+  }, [data]);
+
   const [editLevels, setEditLevels] = useState<{ [hour: number]: number }>(() => {
     const initial: { [hour: number]: number } = {};
     for (let h = 7; h <= 22; h++) {
@@ -33,17 +42,31 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
       if (match && match.score > 0) {
         initial[h] = Math.round(match.score);
       } else {
-        initial[h] = 1; // Default empty
+        initial[h] = 1;
       }
     }
     return initial;
   });
 
+  // Keep editLevels aligned with latest chartData
+  useEffect(() => {
+    setEditLevels((prev) => {
+      const updated = { ...prev };
+      for (let h = 7; h <= 22; h++) {
+        const match = chartData.find((d) => d.hour === h);
+        if (match && match.score > 0) {
+          updated[h] = Math.round(match.score);
+        }
+      }
+      return updated;
+    });
+  }, [chartData]);
+
   // Check if any hour has actual check-in data
-  const hasData = data && data.length > 0 && data.some((d) => d.score > 0 || (d.count && d.count > 0));
+  const hasData = chartData && chartData.length > 0 && chartData.some((d) => d.score > 0 || (d.count && d.count > 0));
 
   // Find dynamic quietest period (lowest score > 0)
-  const itemsWithLogs = data.filter((d) => d.score > 0);
+  const itemsWithLogs = chartData.filter((d) => d.score > 0);
   const quietest = itemsWithLogs.length > 0
     ? itemsWithLogs.reduce((prev, curr) => (curr.score < prev.score ? curr : prev), itemsWithLogs[0])
     : null;
@@ -63,14 +86,35 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
 
   const handleSaveAdminData = async () => {
     if (!placeId) return;
+
+    // 1. Snapshot previous state for rollback if error occurs
+    const previousChartData = [...chartData];
+    const previousEditLevels = { ...editLevels };
+
+    // 2. Prepare payload for all hours 07:00–22:00 (1 single batch payload)
+    const payload = Object.entries(editLevels).map(([h, lvl]) => ({
+      hour: parseInt(h, 10),
+      level: lvl,
+    }));
+
+    // 3. Optimistic UI update: instantly update UI bars and stats
+    const optimisticChartData: HourlyData[] = Array.from({ length: 16 }, (_, i) => i + 7).map((h) => {
+      const lvl = editLevels[h] || 1;
+      const status: CrowdStatus = lvl <= 1 ? 'empty' : lvl === 2 ? 'medium' : 'full';
+      return {
+        hour: h,
+        label: `${h}:00`,
+        score: lvl,
+        level: status,
+        count: 1,
+      };
+    });
+
+    setChartData(optimisticChartData);
     setSaving(true);
 
     try {
-      const payload = Object.entries(editLevels).map(([h, lvl]) => ({
-        hour: parseInt(h, 10),
-        level: lvl,
-      }));
-
+      // 4. Send EXACTLY ONE HTTP request with batch payload
       const res = await fetch('/api/checkins/hourly', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,14 +129,20 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
         throw new Error(resData.error || 'Lỗi cập nhật dữ liệu độ đông');
       }
 
-      showToast('Đã cập nhật dữ liệu độ đông lên Supabase thành công!', 'success');
+      // Success: maintain optimistic state, close modal, notify user
+      showToast('Đã cập nhật dữ liệu độ đông thành công!', 'success');
       setIsEditModalOpen(false);
+
+      // Targeted refetch of only checkins data if callback provided
       if (onDataUpdated) {
         onDataUpdated();
       }
     } catch (err: any) {
       console.error('Hourly update error:', err);
-      showToast(err.message || 'Không thể lưu dữ liệu độ đông', 'error');
+      // 5. Rollback on error
+      setChartData(previousChartData);
+      setEditLevels(previousEditLevels);
+      showToast(err.message || 'Không thể lưu dữ liệu độ đông. Đã hoàn tác!', 'error');
     } finally {
       setSaving(false);
     }
@@ -164,7 +214,7 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
           {/* Histogram Bar Chart */}
           <div className="pt-4 pb-2 overflow-x-auto no-scrollbar">
             <div className="min-w-[540px] flex items-end justify-between gap-1.5 h-36 border-b border-border px-1 pb-1">
-              {data.map((item) => {
+              {chartData.map((item) => {
                 const isCurrent = item.hour === currentHour;
                 const hasItemData = item.score > 0;
                 const heightPercent = hasItemData
@@ -202,7 +252,7 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
 
             {/* Hour labels */}
             <div className="min-w-[540px] flex justify-between text-[10px] text-gray-500 pt-2 px-1 font-mono">
-              {data.map((item) => {
+              {chartData.map((item) => {
                 const isCurrent = item.hour === currentHour;
                 return (
                   <span
@@ -296,7 +346,7 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
                 {saving ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Đang lưu Supabase...</span>
+                    <span>Đang lưu...</span>
                   </>
                 ) : (
                   <>

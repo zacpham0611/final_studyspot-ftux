@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
+import React, { useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { FTU_COORDINATES } from '@/lib/utils/distance';
@@ -63,6 +63,17 @@ function LocationMarker({
   return <Marker position={[lat, lng]} icon={pinIcon} />;
 }
 
+// Controller to smoothly pan/zoom map to selected location
+function MapViewController({ lat, lng }: { lat: number; lng: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (lat && lng) {
+      map.flyTo([lat, lng], 17, { animate: true, duration: 0.8 });
+    }
+  }, [lat, lng, map]);
+  return null;
+}
+
 export default function MapPinPicker({ 
   lat, 
   lng, 
@@ -83,6 +94,7 @@ export default function MapPinPicker({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        <MapViewController lat={lat} lng={lng} />
         <LocationMarker lat={lat} lng={lng} onChange={onChange} />
       </MapContainer>
       <div className="absolute bottom-2 left-2 right-2 bg-white/95 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm text-[11px] text-gray-700 z-[1000] border border-gray-200 pointer-events-none flex justify-between">

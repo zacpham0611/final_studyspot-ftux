@@ -120,6 +120,26 @@ export default function PlaceDetailPage() {
     setSimilarPlaces(store.getSimilarPlaces(placeId, 3));
   };
 
+  // Targeted refetch: only fetch checkins for this place (no review/place overhead)
+  const refreshCheckinsOnly = async () => {
+    try {
+      const { data: supaCheckins, error: checkinErr } = await supabase
+        .from('checkins')
+        .select('*')
+        .eq('place_id', placeId)
+        .order('created_at', { ascending: false });
+
+      if (!checkinErr && supaCheckins) {
+        setCheckins(supaCheckins);
+        store.syncPlaceCheckins(placeId, supaCheckins);
+      } else {
+        setCheckins(store.getCheckinsForPlace(placeId));
+      }
+    } catch {
+      setCheckins(store.getCheckinsForPlace(placeId));
+    }
+  };
+
   useEffect(() => {
     store.incrementView(placeId);
     refreshData();
@@ -428,7 +448,7 @@ export default function PlaceDetailPage() {
             data={hourlyCrowdData}
             placeId={place.id}
             isAdmin={currentUser?.role === 'admin'}
-            onDataUpdated={refreshData}
+            onDataUpdated={refreshCheckinsOnly}
           />
 
           {/* Amenities Grid */}

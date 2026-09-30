@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { store } from '@/lib/data/store';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
@@ -24,7 +26,7 @@ export async function POST(request: NextRequest) {
     // 1. Update in local store
     store.setHourlyCrowdData(placeId, hourlyData);
 
-    // 2. Persist to Supabase Database (public.checkins)
+    // 2. Batch persist to Supabase Database (public.checkins) in a single DB operation
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -34,10 +36,10 @@ export async function POST(request: NextRequest) {
           auth: { persistSession: false },
         });
 
-        // Delete old checkins for this place so admin overrides take full effect
+        // Batch delete existing checkins for this place
         await supabaseAdmin.from('checkins').delete().eq('place_id', placeId);
 
-        // Insert new checkins for each specified hour
+        // Prepare batch rows for all hours (07:00 to 22:00)
         const today = new Date();
         const rows = hourlyData.map((item: { hour: number; level: number }) => {
           const d = new Date(today);
@@ -51,16 +53,22 @@ export async function POST(request: NextRequest) {
           };
         });
 
+        // Single batch insert of all 16 rows at once
         const { error: insErr } = await supabaseAdmin.from('checkins').insert(rows);
         if (insErr) {
-          console.warn('Supabase checkins admin insert notice:', insErr.message);
+          console.error('Supabase checkins batch insert error:', insErr.message);
+          return NextResponse.json(
+            { success: false, error: `Lỗi batch insert vào Supabase: ${insErr.message}` },
+            { status: 500 }
+          );
         }
       } catch (err: any) {
-        console.warn('Supabase checkins update exception:', err.message);
+        console.error('Supabase checkins update exception:', err.message);
+        return NextResponse.json({ success: false, error: err.message }, { status: 500 });
       }
     }
 
-    return NextResponse.json({ success: true, placeId });
+    return NextResponse.json({ success: true, placeId, count: hourlyData.length });
   } catch (e: any) {
     return NextResponse.json({ success: false, error: e.message }, { status: 500 });
   }

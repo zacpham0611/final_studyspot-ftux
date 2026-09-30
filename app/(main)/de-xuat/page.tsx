@@ -1,15 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { store } from '@/lib/data/store';
 import { FTU_COORDINATES } from '@/lib/utils/distance';
 import { useToast } from '@/components/common/Toast';
-import { PlusCircle, MapPin, Sparkles, Clock, Tag } from 'lucide-react';
+import { PlusCircle, MapPin, Search, Loader2, X, Sparkles, Clock, Tag } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AuthGuard } from '@/components/auth/AuthGuard';
-import { supabase } from '@/lib/supabase/client';
 
 const MapPinPicker = dynamic(() => import('@/components/map/MapPinPicker'), {
   ssr: false,
@@ -34,8 +33,77 @@ function SuggestPlaceContent() {
   const [imageUrl, setImageUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Google Places Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<
+    Array<{ id: string; name: string; address: string; lat: number; lng: number }>
+  >([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
   const categories = store.getCategories();
   const amenities = store.getAmenities();
+
+  // Debounced Google Places Search (400ms)
+  useEffect(() => {
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/places/search?query=${encodeURIComponent(searchQuery.trim())}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.places)) {
+            setSearchResults(json.places);
+            setIsDropdownOpen(true);
+          }
+        }
+      } catch (err) {
+        console.warn('Google Places search error:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Click outside to dismiss dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSelectGooglePlace = (place: { name: string; address: string; lat: number; lng: number }) => {
+    // 1. Auto-fill Place Name
+    if (place.name) {
+      setName(place.name);
+    }
+    // 2. Auto-fill Place Address
+    if (place.address) {
+      setAddress(place.address);
+    }
+    // 3. Update Coordinates (centers & zooms MapPinPicker)
+    if (place.lat && place.lng) {
+      setLat(place.lat);
+      setLng(place.lng);
+    }
+    // 4. Close dropdown
+    setIsDropdownOpen(false);
+    setSearchQuery(place.name || '');
+    showToast(`Đã tự động điền "${place.name}" và ghim vị trí từ Google Places!`, 'success');
+  };
 
   const handleAmenityToggle = (id: number) => {
     setSelectedAmenityIds((prev) =>
@@ -54,7 +122,7 @@ function SuggestPlaceContent() {
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
 
-    const placeData = {
+    const placePayload = {
       name: name.trim(),
       category_id: categoryId,
       address: address.trim(),
@@ -75,60 +143,49 @@ function SuggestPlaceContent() {
         ? [imageUrl.trim()]
         : ['https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1000&q=80'],
       amenities: chosenAmenities,
+      created_by: user?.id || null,
     };
 
-    let createdPlaceId = '';
-    let createdLat = lat;
-    let createdLng = lng;
+    let targetPlaceId = '';
+    let targetLat = lat;
+    let targetLng = lng;
 
-    if (user?.id) {
-      try {
-        const { data: supaPlace, error: supaErr } = await supabase
-          .from('places')
-          .insert({
-            name: placeData.name,
-            category_id: placeData.category_id,
-            address: placeData.address,
-            lat: placeData.lat,
-            lng: placeData.lng,
-            description: placeData.description,
-            opening_hours: placeData.opening_hours,
-            price_level: placeData.price_level,
-            images: placeData.images,
-            status: 'pending',
-            created_by: user.id,
-          })
-          .select()
-          .single();
+    try {
+      // 1. Submit to API endpoint (inserts into Supabase public.places and returns created record with UUID)
+      const res = await fetch('/api/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(placePayload),
+      });
 
-        if (!supaErr && supaPlace) {
-          createdPlaceId = supaPlace.id;
-          createdLat = supaPlace.lat;
-          createdLng = supaPlace.lng;
-        } else if (supaErr) {
-          console.warn('Supabase place insert notice:', supaErr.message);
-        }
-      } catch (e) {
-        console.warn('Supabase place proposal exception:', e);
+      const resJson = await res.json();
+
+      if (res.ok && resJson.success && resJson.place) {
+        targetPlaceId = resJson.place.id;
+        targetLat = resJson.place.lat;
+        targetLng = resJson.place.lng;
+      } else {
+        const fallbackPlace = store.proposePlace(placePayload, user || undefined);
+        targetPlaceId = fallbackPlace.id;
+        targetLat = fallbackPlace.lat;
+        targetLng = fallbackPlace.lng;
       }
+    } catch (err: any) {
+      console.warn('Proposal submission notice:', err.message);
+      const fallbackPlace = store.proposePlace(placePayload, user || undefined);
+      targetPlaceId = fallbackPlace.id;
+      targetLat = fallbackPlace.lat;
+      targetLng = fallbackPlace.lng;
     }
-
-    const newPlace = store.proposePlace({
-      ...placeData,
-      id: createdPlaceId || undefined,
-    }, user || undefined);
-
-    const finalId = createdPlaceId || newPlace.id;
-    const finalLat = createdLat || newPlace.lat;
-    const finalLng = createdLng || newPlace.lng;
 
     setSubmitting(false);
     showToast(
       'Gửi đề xuất địa điểm thành công! Quán đang ở trạng thái Chờ duyệt bởi Ban Quản Trị FTU.',
       'success'
     );
-    // Tự động chuyển hướng đến đúng vị trí quán vừa tạo trên bản đồ (focus đúng ID + lat/lng)
-    router.push(`/?placeId=${finalId}&lat=${finalLat}&lng=${finalLng}`);
+
+    // 2. Auto navigate to home map, prioritizing place.id, then lat/lng
+    router.push(`/?placeId=${targetPlaceId}&lat=${targetLat}&lng=${targetLng}`);
   };
 
   return (
@@ -187,14 +244,86 @@ function SuggestPlaceContent() {
           />
         </div>
 
-        {/* Mini Map Coordinate Picker */}
-        <div>
-          <div className="flex justify-between items-center mb-1.5">
+        {/* Mini Map Coordinate Picker with Google Places Search Box */}
+        <div className="space-y-2">
+          <div className="flex justify-between items-center">
             <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
               <MapPin className="w-3.5 h-3.5 text-burgundy" /> Ghim vị trí tọa độ trên bản đồ
             </label>
             <span className="text-[11px] text-gray-500">Bấm trực tiếp lên bản đồ để di chuyển ghim</span>
           </div>
+
+          {/* Google Places Search Box positioned directly above map */}
+          <div ref={searchContainerRef} className="relative z-20">
+            <div className="relative flex items-center">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setIsDropdownOpen(true);
+                }}
+                onFocus={() => {
+                  if (searchResults.length > 0) setIsDropdownOpen(true);
+                }}
+                placeholder="Tìm kiếm quán qua Google Places (VD: Highlands Láng Hạ, Aha Chùa Láng...)"
+                className="w-full pl-9 pr-8 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy bg-slate-50 focus:bg-white transition-colors"
+              />
+              {isSearching && (
+                <Loader2 className="w-3.5 h-3.5 text-burgundy animate-spin absolute right-3 pointer-events-none" />
+              )}
+              {!isSearching && searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSearchResults([]);
+                    setIsDropdownOpen(false);
+                  }}
+                  className="absolute right-2.5 text-gray-400 hover:text-gray-600 p-0.5"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Dropdown Results list over map */}
+            {isDropdownOpen && searchQuery.trim().length >= 2 && (
+              <div className="absolute left-0 right-0 mt-1 bg-white rounded-xl border border-border shadow-lg max-h-56 overflow-y-auto z-[1050] divide-y divide-gray-100">
+                {isSearching ? (
+                  <div className="p-3 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-burgundy" />
+                    Đang tìm kiếm địa điểm trên Google Places...
+                  </div>
+                ) : searchResults.length > 0 ? (
+                  searchResults.map((item) => (
+                    <button
+                      key={item.id || `${item.lat}-${item.lng}`}
+                      type="button"
+                      onClick={() => handleSelectGooglePlace(item)}
+                      className="w-full px-3.5 py-2.5 text-left hover:bg-burgundy/5 transition-colors flex items-start gap-2.5 group"
+                    >
+                      <MapPin className="w-4 h-4 text-burgundy flex-shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-gray-900 group-hover:text-burgundy truncate">
+                          {item.name}
+                        </div>
+                        <div className="text-[11px] text-gray-500 truncate mt-0.5">
+                          {item.address}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="p-3 text-center text-xs text-gray-500">
+                    Không tìm thấy địa điểm phù hợp trên Google Places.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <MapPinPicker
             lat={lat}
             lng={lng}
@@ -288,7 +417,7 @@ function SuggestPlaceContent() {
             placeholder="https://images.unsplash.com/..."
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
-            className="w-full px-3.5 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
           />
         </div>
 
