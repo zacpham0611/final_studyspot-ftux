@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { store } from '@/lib/data/store';
 import { FTU_COORDINATES } from '@/lib/utils/distance';
 import { useToast } from '@/components/common/Toast';
-import { PlusCircle, MapPin, Search, Loader2, X, Sparkles, Clock, Tag } from 'lucide-react';
+import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 
@@ -33,39 +33,49 @@ function SuggestPlaceContent() {
   const [imageUrl, setImageUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Google Places Search State
+  // Map Search State (OpenStreetMap Nominatim via server-side /api/places/search)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<
     Array<{ id: string; name: string; address: string; lat: number; lng: number }>
   >([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   const categories = store.getCategories();
   const amenities = store.getAmenities();
 
-  // Debounced Google Places Search (400ms)
+  // Debounced Search (400ms) calling server-side Nominatim endpoint
   useEffect(() => {
     if (!searchQuery || searchQuery.trim().length < 2) {
       setSearchResults([]);
+      setSearchError(null);
       setIsSearching(false);
       return;
     }
 
     setIsSearching(true);
+    setSearchError(null);
+
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/places/search?query=${encodeURIComponent(searchQuery.trim())}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && Array.isArray(json.places)) {
-            setSearchResults(json.places);
-            setIsDropdownOpen(true);
-          }
+        const json = await res.json();
+
+        if (res.ok && json.success) {
+          setSearchResults(Array.isArray(json.places) ? json.places : []);
+          setSearchError(null);
+        } else {
+          setSearchResults([]);
+          setSearchError(json.error || 'Không thể lấy dữ liệu tìm kiếm.');
         }
-      } catch (err) {
-        console.warn('Google Places search error:', err);
+        setIsDropdownOpen(true);
+      } catch (err: any) {
+        console.warn('Map search error:', err);
+        setSearchResults([]);
+        setSearchError('Lỗi kết nối dịch vụ tìm kiếm địa điểm.');
+        setIsDropdownOpen(true);
       } finally {
         setIsSearching(false);
       }
@@ -85,7 +95,7 @@ function SuggestPlaceContent() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelectGooglePlace = (place: { name: string; address: string; lat: number; lng: number }) => {
+  const handleSelectPlace = (place: { name: string; address: string; lat: number; lng: number }) => {
     // 1. Auto-fill Place Name
     if (place.name) {
       setName(place.name);
@@ -94,7 +104,7 @@ function SuggestPlaceContent() {
     if (place.address) {
       setAddress(place.address);
     }
-    // 3. Update Coordinates (centers & zooms MapPinPicker)
+    // 3. Update Coordinates (triggers MapViewController in MapPinPicker to center & zoom)
     if (place.lat && place.lng) {
       setLat(place.lat);
       setLng(place.lng);
@@ -102,7 +112,7 @@ function SuggestPlaceContent() {
     // 4. Close dropdown
     setIsDropdownOpen(false);
     setSearchQuery(place.name || '');
-    showToast(`Đã tự động điền "${place.name}" và ghim vị trí từ Google Places!`, 'success');
+    showToast(`Đã tự động điền "${place.name}" và ghim vị trí trên bản đồ!`, 'success');
   };
 
   const handleAmenityToggle = (id: number) => {
@@ -244,7 +254,7 @@ function SuggestPlaceContent() {
           />
         </div>
 
-        {/* Mini Map Coordinate Picker with Google Places Search Box */}
+        {/* Mini Map Coordinate Picker with Search Box */}
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
@@ -253,7 +263,7 @@ function SuggestPlaceContent() {
             <span className="text-[11px] text-gray-500">Bấm trực tiếp lên bản đồ để di chuyển ghim</span>
           </div>
 
-          {/* Google Places Search Box positioned directly above map */}
+          {/* Search Box positioned directly above map */}
           <div ref={searchContainerRef} className="relative z-20">
             <div className="relative flex items-center">
               <Search className="w-4 h-4 text-gray-400 absolute left-3 pointer-events-none" />
@@ -265,9 +275,9 @@ function SuggestPlaceContent() {
                   setIsDropdownOpen(true);
                 }}
                 onFocus={() => {
-                  if (searchResults.length > 0) setIsDropdownOpen(true);
+                  if (searchResults.length > 0 || searchError) setIsDropdownOpen(true);
                 }}
-                placeholder="Tìm kiếm quán qua Google Places (VD: Highlands Láng Hạ, Aha Chùa Láng...)"
+                placeholder="Tìm nhanh quán trên bản đồ (VD: Highlands Láng Hạ, Aha Chùa Láng...)"
                 className="w-full pl-9 pr-8 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy bg-slate-50 focus:bg-white transition-colors"
               />
               {isSearching && (
@@ -279,9 +289,10 @@ function SuggestPlaceContent() {
                   onClick={() => {
                     setSearchQuery('');
                     setSearchResults([]);
+                    setSearchError(null);
                     setIsDropdownOpen(false);
                   }}
-                  className="absolute right-2.5 text-gray-400 hover:text-gray-600 p-0.5"
+                  className="absolute right-2.5 text-gray-400 hover:text-gray-600 p-0.5 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -294,15 +305,20 @@ function SuggestPlaceContent() {
                 {isSearching ? (
                   <div className="p-3 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-burgundy" />
-                    Đang tìm kiếm địa điểm trên Google Places...
+                    Đang tìm kiếm địa điểm trên bản đồ...
+                  </div>
+                ) : searchError ? (
+                  <div className="p-3 text-center text-xs text-amber-600 flex items-center justify-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{searchError}</span>
                   </div>
                 ) : searchResults.length > 0 ? (
                   searchResults.map((item) => (
                     <button
                       key={item.id || `${item.lat}-${item.lng}`}
                       type="button"
-                      onClick={() => handleSelectGooglePlace(item)}
-                      className="w-full px-3.5 py-2.5 text-left hover:bg-burgundy/5 transition-colors flex items-start gap-2.5 group"
+                      onClick={() => handleSelectPlace(item)}
+                      className="w-full px-3.5 py-2.5 text-left hover:bg-burgundy/5 transition-colors flex items-start gap-2.5 group cursor-pointer"
                     >
                       <MapPin className="w-4 h-4 text-burgundy flex-shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1">
@@ -317,7 +333,7 @@ function SuggestPlaceContent() {
                   ))
                 ) : (
                   <div className="p-3 text-center text-xs text-gray-500">
-                    Không tìm thấy địa điểm phù hợp trên Google Places.
+                    Không tìm thấy địa điểm phù hợp trên bản đồ.
                   </div>
                 )}
               </div>
@@ -417,7 +433,7 @@ function SuggestPlaceContent() {
             placeholder="https://images.unsplash.com/..."
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
+            className="w-full px-3.5 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
           />
         </div>
 
@@ -425,7 +441,7 @@ function SuggestPlaceContent() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full py-3 rounded-xl bg-burgundy hover:bg-burgundy-hover text-white font-bold text-sm transition-colors shadow-sm"
+            className="w-full py-3 rounded-xl bg-burgundy hover:bg-burgundy-hover text-white font-bold text-sm transition-colors shadow-sm cursor-pointer disabled:opacity-50"
           >
             {submitting ? 'Đang gửi...' : 'Gửi đề xuất phê duyệt'}
           </button>
