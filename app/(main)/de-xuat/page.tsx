@@ -77,27 +77,58 @@ function SuggestPlaceContent() {
       amenities: chosenAmenities,
     };
 
+    let createdPlaceId = '';
+    let createdLat = lat;
+    let createdLng = lng;
+
     if (user?.id) {
       try {
-        await supabase.from('places').insert({
-          ...placeData,
-          status: 'pending',
-          created_by: user.id,
-          opening_hours: JSON.stringify(placeData.opening_hours),
-        });
+        const { data: supaPlace, error: supaErr } = await supabase
+          .from('places')
+          .insert({
+            name: placeData.name,
+            category_id: placeData.category_id,
+            address: placeData.address,
+            lat: placeData.lat,
+            lng: placeData.lng,
+            description: placeData.description,
+            opening_hours: placeData.opening_hours,
+            price_level: placeData.price_level,
+            images: placeData.images,
+            status: 'pending',
+            created_by: user.id,
+          })
+          .select()
+          .single();
+
+        if (!supaErr && supaPlace) {
+          createdPlaceId = supaPlace.id;
+          createdLat = supaPlace.lat;
+          createdLng = supaPlace.lng;
+        } else if (supaErr) {
+          console.warn('Supabase place insert notice:', supaErr.message);
+        }
       } catch (e) {
-        console.warn('Supabase place proposal notice:', e);
+        console.warn('Supabase place proposal exception:', e);
       }
     }
 
-    const newPlace = store.proposePlace(placeData, user || undefined);
+    const newPlace = store.proposePlace({
+      ...placeData,
+      id: createdPlaceId || undefined,
+    }, user || undefined);
+
+    const finalId = createdPlaceId || newPlace.id;
+    const finalLat = createdLat || newPlace.lat;
+    const finalLng = createdLng || newPlace.lng;
 
     setSubmitting(false);
     showToast(
       'Gửi đề xuất địa điểm thành công! Quán đang ở trạng thái Chờ duyệt bởi Ban Quản Trị FTU.',
       'success'
     );
-    router.push('/ho-so');
+    // Tự động chuyển hướng đến đúng vị trí quán vừa tạo trên bản đồ (focus đúng ID + lat/lng)
+    router.push(`/?placeId=${finalId}&lat=${finalLat}&lng=${finalLng}`);
   };
 
   return (

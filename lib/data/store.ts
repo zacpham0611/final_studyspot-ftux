@@ -501,22 +501,22 @@ class StudySpotStore {
   }
 
   /**
-   * Calculates hourly crowd histogram (07:00 to 22:00)
+   * Calculates hourly crowd histogram (07:00 to 22:00) purely from checkins.
+   * Returns empty array if no check-ins exist for the place.
    */
-  getHourlyCrowdData(placeId: string): { hour: number; label: string; score: number; level: CrowdStatus }[] {
-    const placeCheckins = this.getCheckinsForPlace(placeId);
-    const hourlyScores: { [h: number]: number[] } = {};
+  getHourlyCrowdData(
+    placeId: string, 
+    customCheckins?: Checkin[]
+  ): { hour: number; label: string; score: number; level: CrowdStatus; count: number }[] {
+    const placeCheckins = customCheckins !== undefined ? customCheckins : this.getCheckinsForPlace(placeId);
+    if (!placeCheckins || placeCheckins.length === 0) {
+      return [];
+    }
 
+    const hourlyScores: { [h: number]: number[] } = {};
     for (let h = 7; h <= 22; h++) {
       hourlyScores[h] = [];
     }
-
-    // Default realistic baseline if place doesn't have hundreds of logs
-    const baseCurve: { [h: number]: number } = {
-      7: 1.1, 8: 1.3, 9: 1.8, 10: 2.2, 11: 2.4, 12: 1.9,
-      13: 1.5, 14: 1.3, 15: 1.4, 16: 1.6, 17: 1.9, 18: 2.3,
-      19: 2.7, 20: 2.6, 21: 2.1, 22: 1.4
-    };
 
     for (const c of placeCheckins) {
       const d = new Date(c.created_at);
@@ -526,27 +526,65 @@ class StudySpotStore {
       }
     }
 
+    const hasAnyCheckinInHours = Object.values(hourlyScores).some((logs) => logs.length > 0);
+    if (!hasAnyCheckinInHours) {
+      return [];
+    }
+
     const result = [];
     for (let h = 7; h <= 22; h++) {
       const logs = hourlyScores[h];
-      let score = baseCurve[h] || 1.5;
       if (logs.length > 0) {
-        score = logs.reduce((a, b) => a + b, 0) / logs.length;
-      }
-      
-      let level: CrowdStatus = 'empty';
-      if (score > 2.33) level = 'full';
-      else if (score >= 1.67) level = 'medium';
+        const score = logs.reduce((a, b) => a + b, 0) / logs.length;
+        let level: CrowdStatus = 'empty';
+        if (score > 2.33) level = 'full';
+        else if (score >= 1.67) level = 'medium';
 
-      result.push({
-        hour: h,
-        label: `${h}:00`,
-        score: Math.round(score * 10) / 10,
-        level,
-      });
+        result.push({
+          hour: h,
+          label: `${h}:00`,
+          score: Math.round(score * 10) / 10,
+          level,
+          count: logs.length,
+        });
+      } else {
+        result.push({
+          hour: h,
+          label: `${h}:00`,
+          score: 0,
+          level: 'unknown' as CrowdStatus,
+          count: 0,
+        });
+      }
     }
 
     return result;
+  }
+
+  syncPlaceCheckins(placeId: string, newCheckins: Checkin[]) {
+    this.checkins = this.checkins.filter((c) => c.place_id !== placeId).concat(newCheckins);
+    this.persist();
+    this.notify();
+  }
+
+  setHourlyCrowdData(placeId: string, hourlyLevels: { hour: number; level: number }[]) {
+    const today = new Date();
+    const newCheckins: Checkin[] = hourlyLevels.map(({ hour, level }) => {
+      const d = new Date(today);
+      d.setHours(hour, 0, 0, 0);
+      return {
+        id: `chk-admin-${placeId}-${hour}`,
+        place_id: placeId,
+        user_id: this.currentUser?.id || 'admin-override',
+        level: level as CrowdLevel,
+        note: 'Admin thiết lập',
+        created_at: d.toISOString(),
+      };
+    });
+
+    this.checkins = this.checkins.filter((c) => c.place_id !== placeId).concat(newCheckins);
+    this.persist();
+    this.notify();
   }
 
   // --- Reviews ---

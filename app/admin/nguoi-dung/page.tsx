@@ -15,22 +15,39 @@ export default function AdminUsersPage() {
 
   const loadData = async () => {
     try {
-      // 1. Fetch live user list directly from Supabase Database (public.users)
-      // Only select required columns for minimal payload & faster query
+      // 1. Fetch live user list via server API (bypasses RLS using Service Role & auto-syncs auth.users)
+      const res = await fetch('/api/admin/users');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.users)) {
+          const allReviews = store.getAllReviewsAdmin();
+          const enriched = json.users.map((u: any) => ({
+            ...u,
+            review_count: allReviews.filter((r) => r.user_id === u.id).length,
+          }));
+          setUsers(enriched);
+          store.syncUsersFromSupabase(json.users);
+          return;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('API users fetch warning:', apiErr);
+    }
+
+    try {
+      // 2. Direct Supabase Client fallback
       const { data: dbUsers, error } = await supabase
         .from('users')
         .select('id, full_name, email, avatar_url, role, is_locked, created_at')
         .order('created_at', { ascending: false });
 
       if (!error && dbUsers && dbUsers.length > 0) {
-        // Sync with review counts from store
         const allReviews = store.getAllReviewsAdmin();
         const enriched = dbUsers.map((u: any) => ({
           ...u,
           review_count: allReviews.filter((r) => r.user_id === u.id).length,
         }));
         setUsers(enriched);
-        // Supabase is the ultimate source of truth:
         store.syncUsersFromSupabase(dbUsers);
         return;
       }
@@ -38,7 +55,7 @@ export default function AdminUsersPage() {
       console.warn('Supabase users load notice:', e);
     }
 
-    // Fallback to store
+    // 3. Fallback to store
     setUsers(store.getAllUsers());
   };
 
@@ -69,12 +86,12 @@ export default function AdminUsersPage() {
       )
       .subscribe();
 
-    // 3. Fallback interval polling every 8s for cross-device updates if realtime is disconnected
+    // 3. Fallback interval polling every 4s for cross-device updates if realtime is disconnected
     const pollTimer = setInterval(() => {
       if (isMounted) {
         loadData();
       }
-    }, 8000);
+    }, 4000);
 
     return () => {
       isMounted = false;

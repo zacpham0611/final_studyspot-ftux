@@ -13,6 +13,7 @@ import { Star, MapPin, ArrowRight } from 'lucide-react';
 interface MapContainerProps {
   places: Place[];
   selectedPlaceId?: string | null;
+  targetCoords?: { lat: number; lng: number } | null;
   onSelectPlace?: (place: Place) => void;
   height?: string;
   minHeight?: string;
@@ -21,9 +22,11 @@ interface MapContainerProps {
 // Controller to fly to place and open popup or reset to FTU center
 function MapFlyController({ 
   selectedPlace, 
+  targetCoords,
   markerRefs 
 }: { 
   selectedPlace?: Place; 
+  targetCoords?: { lat: number; lng: number } | null;
   markerRefs: React.MutableRefObject<Record<string, L.Marker | null>> 
 }) {
   const map = useMap();
@@ -39,13 +42,18 @@ function MapFlyController({
       if (targetMarker) {
         targetMarker.openPopup();
       }
+    } else if (targetCoords) {
+      map.flyTo([targetCoords.lat, targetCoords.lng], 16, {
+        animate: true,
+        duration: 1.0,
+      });
     } else {
       map.flyTo([FTU_COORDINATES.lat, FTU_COORDINATES.lng], 16, {
         animate: true,
         duration: 0.8,
       });
     }
-  }, [selectedPlace, map, markerRefs]);
+  }, [selectedPlace, targetCoords, map, markerRefs]);
 
   return null;
 }
@@ -53,6 +61,7 @@ function MapFlyController({
 export default function MapContainer({
   places,
   selectedPlaceId,
+  targetCoords,
   onSelectPlace,
 }: MapContainerProps) {
   const selectedPlace = places.find((p) => p.id === selectedPlaceId);
@@ -61,7 +70,7 @@ export default function MapContainer({
   return (
     <div style={{ height: '100%', width: '100%' }} className="relative w-full h-full">
       <LeafletMap
-        center={[FTU_COORDINATES.lat, FTU_COORDINATES.lng]}
+        center={targetCoords ? [targetCoords.lat, targetCoords.lng] : [FTU_COORDINATES.lat, FTU_COORDINATES.lng]}
         zoom={16}
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
@@ -72,7 +81,7 @@ export default function MapContainer({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        <MapFlyController selectedPlace={selectedPlace} markerRefs={markerRefs} />
+        <MapFlyController selectedPlace={selectedPlace} targetCoords={targetCoords} markerRefs={markerRefs} />
 
         {/* Foreign Trade University Central Marker - Burgundy #8A1538 */}
         <Marker

@@ -99,7 +99,23 @@ export default function PlaceDetailPage() {
       setReviews(store.getReviewsForPlace(placeId));
     }
 
-    setCheckins(store.getCheckinsForPlace(placeId));
+    try {
+      const { data: supaCheckins, error: checkinErr } = await supabase
+        .from('checkins')
+        .select('*')
+        .eq('place_id', placeId)
+        .order('created_at', { ascending: false });
+
+      if (!checkinErr && supaCheckins) {
+        setCheckins(supaCheckins);
+        store.syncPlaceCheckins(placeId, supaCheckins);
+      } else {
+        setCheckins(store.getCheckinsForPlace(placeId));
+      }
+    } catch {
+      setCheckins(store.getCheckinsForPlace(placeId));
+    }
+
     setIsFavorite(store.isFavorite(placeId, currentUser?.id));
     setSimilarPlaces(store.getSimilarPlaces(placeId, 3));
   };
@@ -242,7 +258,7 @@ export default function PlaceDetailPage() {
     selectedStarFilter === 'all' ? true : r.rating === selectedStarFilter
   );
 
-  const hourlyCrowdData = store.getHourlyCrowdData(place.id);
+  const hourlyCrowdData = store.getHourlyCrowdData(place.id, checkins);
   const priceSymbol = '$'.repeat(place.price_level || 2);
   const priceText =
     place.price_level === 1 ? '< 30.000đ (Giá sinh viên)' :
@@ -408,7 +424,12 @@ export default function PlaceDetailPage() {
           </div>
 
           {/* Phase 1 Feature: Hourly Crowd Chart */}
-          <HourlyCrowdChart data={hourlyCrowdData} />
+          <HourlyCrowdChart
+            data={hourlyCrowdData}
+            placeId={place.id}
+            isAdmin={currentUser?.role === 'admin'}
+            onDataUpdated={refreshData}
+          />
 
           {/* Amenities Grid */}
           <div className="bg-white p-6 rounded-2xl border border-border shadow-soft space-y-4">

@@ -145,72 +145,37 @@ function ProfileContent() {
     setIsUploading(true);
 
     const userId = currentUser.id;
-    const fileExt = file.name.split('.').pop() || 'jpg';
-    const filePath = `${userId}/${Date.now()}.${fileExt}`;
-
-    let finalAvatarUrl = '';
 
     try {
-      // 1. Try direct upload to Supabase Storage bucket 'avatars'
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: true,
-        });
+      // Send file to server avatar endpoint (uploads to Supabase Storage and updates public.users.avatar_url)
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('userId', userId);
 
-      if (!uploadError && uploadData) {
-        // 2. Get Public URL from Supabase Storage
-        const { data: { publicUrl } } = supabase.storage
-          .from('avatars')
-          .getPublicUrl(filePath);
+      const uploadRes = await fetch('/api/user/avatar', {
+        method: 'POST',
+        body: formData,
+      });
 
-        finalAvatarUrl = publicUrl;
-      } else {
-        // Server upload fallback via /api/user/avatar (creates bucket & bypasses RLS safely)
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('userId', userId);
-
-        const uploadRes = await fetch('/api/user/avatar', {
-          method: 'POST',
-          body: formData,
-        });
-
-        const uploadResult = await uploadRes.json();
-        if (uploadResult.success && uploadResult.avatar_url) {
-          finalAvatarUrl = uploadResult.avatar_url;
-        } else {
-          throw new Error(uploadResult.error || uploadError?.message || 'Không thể upload ảnh lên Storage');
-        }
+      const uploadResult = await uploadRes.json();
+      if (!uploadRes.ok || !uploadResult.success || !uploadResult.avatar_url) {
+        throw new Error(uploadResult.error || 'Lỗi xử lý tải ảnh lên máy chủ');
       }
 
-      // 3. Save/Persist avatar_url to Supabase Database (public.users) via server endpoint
-      if (finalAvatarUrl) {
-        const updateRes = await fetch('/api/user/avatar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, avatarUrl: finalAvatarUrl }),
-        });
+      const finalAvatarUrl = uploadResult.avatar_url;
 
-        const updateResult = await updateRes.json();
-        if (!updateResult.success) {
-          throw new Error(updateResult.error || 'Lỗi cập nhật ảnh đại diện vào cơ sở dữ liệu');
-        }
+      // Update AuthContext, Header & Store immediately
+      store.updateUserAvatar(userId, finalAvatarUrl);
+      await refreshUser();
+      setPreviewUrl(finalAvatarUrl);
 
-        // 4. Update AuthContext, Header & Store immediately
-        store.updateUserAvatar(userId, finalAvatarUrl);
-        await refreshUser();
-        setPreviewUrl(finalAvatarUrl);
-
-        showToast('Cập nhật ảnh đại diện thành công!', 'success');
-        router.refresh();
-      }
+      showToast('Cập nhật ảnh đại diện thành công!', 'success');
+      router.refresh();
     } catch (err: any) {
       console.error('Avatar upload exception:', err);
       // Clean rollback on failure (never keep broken preview)
       setPreviewUrl(null);
-      showToast('Không thể cập nhật ảnh đại diện. Vui lòng thử lại!', 'error');
+      showToast(err.message || 'Không thể cập nhật ảnh đại diện. Vui lòng thử lại!', 'error');
     } finally {
       setIsUploading(false);
     }

@@ -22,10 +22,14 @@ BEGIN
     COALESCE(NEW.raw_user_meta_data->>'full_name', 'Người dùng'),
     NEW.email,
     NEW.raw_user_meta_data->>'avatar_url',
-    COALESCE(NEW.raw_user_meta_data->>'role', 'user')
+    CASE 
+      WHEN NEW.raw_user_meta_data->>'role' = 'admin' THEN 'admin'
+      ELSE 'user'
+    END
   )
   ON CONFLICT (id) DO UPDATE SET
     full_name = EXCLUDED.full_name,
+    avatar_url = COALESCE(EXCLUDED.avatar_url, public.users.avatar_url),
     role = EXCLUDED.role;
   RETURN NEW;
 END;
@@ -157,10 +161,13 @@ ALTER TABLE public.review_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Public users select" ON public.users FOR SELECT USING (true);
+CREATE POLICY "Users insert own profile" ON public.users FOR INSERT WITH CHECK (auth.uid() = id OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Users update own profile" ON public.users FOR UPDATE USING (auth.uid() = id OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 CREATE POLICY "Public places select" ON public.places FOR SELECT USING (status = 'approved' OR auth.uid() = created_by OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "User places insert" ON public.places FOR INSERT WITH CHECK (auth.uid() = created_by OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 CREATE POLICY "Public reviews select" ON public.reviews FOR SELECT USING (is_hidden = false OR auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 CREATE POLICY "Public checkins select" ON public.checkins FOR SELECT USING (true);
-CREATE POLICY "User checkin insert" ON public.checkins FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "User checkin insert" ON public.checkins FOR INSERT WITH CHECK (auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 CREATE POLICY "User review insert/update" ON public.reviews FOR ALL USING (auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 CREATE POLICY "User favorites" ON public.favorites FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY "User review_helpful" ON public.review_helpful FOR ALL USING (auth.uid() = user_id);
@@ -173,6 +180,7 @@ CREATE POLICY "Admin places full" ON public.places FOR ALL USING (EXISTS (SELECT
 INSERT INTO storage.buckets (id, name, public) VALUES ('places', 'places', true), ('avatars', 'avatars', true) ON CONFLICT (id) DO NOTHING;
 CREATE POLICY "Public Storage Select" ON storage.objects FOR SELECT USING (bucket_id IN ('places', 'avatars'));
 CREATE POLICY "User Avatar Upload" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.uid() IS NOT NULL);
+CREATE POLICY "User Avatar Update" ON storage.objects FOR UPDATE USING (bucket_id = 'avatars' AND auth.uid() IS NOT NULL);
 CREATE POLICY "Admin Places Storage" ON storage.objects FOR ALL USING (bucket_id = 'places' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 
 -- 4. KHI TRUY CẬP TÀI KHOẢN ADMIN MẶC ĐỊNH (admin123@ftu.edu.vn / 123456)

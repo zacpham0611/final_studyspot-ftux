@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { store } from '@/lib/data/store';
+import { supabase } from '@/lib/supabase/client';
 import { Place, PlaceFilterOptions, Category, Amenity } from '@/lib/types/database';
 import { PlaceCard } from '@/components/place/PlaceCard';
 import { PlaceFilterDrawer } from '@/components/place/PlaceFilterDrawer';
@@ -51,12 +52,69 @@ function HomePageContent() {
   const [activeChip, setActiveChip] = useState<string>('all');
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+  // Check URL focus parameters (e.g. from proposal navigation)
+  const paramPlaceId = searchParams.get('placeId') || searchParams.get('place') || searchParams.get('id');
+  const paramLat = searchParams.get('lat') ? parseFloat(searchParams.get('lat')!) : null;
+  const paramLng = searchParams.get('lng') ? parseFloat(searchParams.get('lng')!) : null;
+
   // Check unauthorized redirect notice
   useEffect(() => {
     if (searchParams.get('denied') === '1') {
       showToast('Bạn không có quyền truy cập! Chỉ tài khoản Admin mới có quyền vào trang quản trị.', 'error');
     }
   }, [searchParams]);
+
+  // Focus on proposed / targeted place on load
+  useEffect(() => {
+    if (paramPlaceId) {
+      setSelectedPlaceId(paramPlaceId);
+
+      const localPlace = store.getPlaceById(paramPlaceId);
+      if (localPlace) {
+        setPlaces((prev) => {
+          if (!prev.some((p) => p.id === paramPlaceId)) {
+            return [localPlace, ...prev];
+          }
+          return prev;
+        });
+      }
+
+      // Query Supabase directly for newly created place
+      const fetchPlace = async () => {
+        try {
+          const { data: supaData, error: supaErr } = await supabase
+            .from('places')
+            .select('*')
+            .eq('id', paramPlaceId)
+            .single();
+
+          if (!supaErr && supaData) {
+            const formatted: Place = {
+              ...supaData,
+              opening_hours: typeof supaData.opening_hours === 'string' ? JSON.parse(supaData.opening_hours) : supaData.opening_hours,
+              images: supaData.images || [],
+              price_level: supaData.price_level || 2,
+              view_count: supaData.view_count || 0,
+            };
+            store.savePlace(formatted);
+            setPlaces((prev) => {
+              const idx = prev.findIndex((p) => p.id === paramPlaceId);
+              if (idx !== -1) {
+                const next = [...prev];
+                next[idx] = formatted;
+                return next;
+              }
+              return [formatted, ...prev];
+            });
+          }
+        } catch (e) {
+          console.warn('Place fetch notice:', e);
+        }
+      };
+
+      fetchPlace();
+    }
+  }, [paramPlaceId]);
 
   // Fetch / Refresh data
   const loadData = () => {
@@ -277,6 +335,7 @@ function HomePageContent() {
         <StudyMap
           places={places}
           selectedPlaceId={selectedPlaceId}
+          targetCoords={paramLat && paramLng ? { lat: paramLat, lng: paramLng } : null}
           onSelectPlace={handleSelectFromMap}
         />
 

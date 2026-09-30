@@ -22,38 +22,34 @@ export async function POST(request: NextRequest) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
-      try {
-        const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-          auth: { persistSession: false },
-        });
+    if (!supabaseUrl || !serviceKey || supabaseUrl.includes('placeholder')) {
+      return NextResponse.json(
+        { success: false, error: 'Chưa cấu hình Supabase URL hoặc API Key hợp lệ' },
+        { status: 500 }
+      );
+    }
 
-        const { error } = await supabaseAdmin.from('users').upsert({
-          id,
-          email: cleanEmail,
-          full_name: cleanFullName,
-          role: safeRole,
-          is_locked: false,
-          created_at: new Date().toISOString(),
-        });
+    const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
 
-        if (error) {
-          console.warn('API user sync warning:', error.message);
-          if (error.message.includes('fetch failed') || error.message.includes('ENOTFOUND')) {
-            return NextResponse.json({ success: true, offline: true });
-          }
-          return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-        }
-      } catch (err: any) {
-        console.warn('API user sync network warning:', err.message);
-        if (err.message.includes('fetch failed') || err.message.includes('ENOTFOUND')) {
-          return NextResponse.json({ success: true, offline: true });
-        }
-      }
+    const { error } = await supabaseAdmin.from('users').upsert({
+      id,
+      email: cleanEmail,
+      full_name: cleanFullName,
+      role: safeRole,
+      is_locked: false,
+      created_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      console.error('Supabase user upsert error:', error.message);
+      return NextResponse.json({ success: false, error: `Supabase user sync error: ${error.message}` }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (e: any) {
+    console.error('API user sync exception:', e.message);
     return NextResponse.json({ success: false, error: e.message }, { status: 500 });
   }
 }
