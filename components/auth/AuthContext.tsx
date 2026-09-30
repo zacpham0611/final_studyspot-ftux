@@ -120,13 +120,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // If no active Supabase auth session -> Unauthenticated Guest
+      // If no active Supabase auth session, check stored user (offline / resilient mode)
+      const currentStored = store.getCurrentUser();
+      if (currentStored) {
+        setUser(currentStored);
+        syncCookies(currentStored);
+        return currentStored;
+      }
+
+      // Truly Unauthenticated Guest
       store.setCurrentUser(null);
       setUser(null);
       syncCookies(null);
       return null;
     } catch (e) {
       console.warn('Auth refresh warning:', e);
+      const currentStored = store.getCurrentUser();
+      if (currentStored) {
+        setUser(currentStored);
+        syncCookies(currentStored);
+        return currentStored;
+      }
       store.setCurrentUser(null);
       setUser(null);
       syncCookies(null);

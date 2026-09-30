@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({
@@ -19,47 +20,50 @@ export async function middleware(request: NextRequest) {
   let userDbRole: string | null = null;
 
   // 1. Verify Supabase Auth Session using @supabase/ssr
-  try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && supabaseKey && !supabaseUrl.includes('placeholder')) {
-      const { createServerClient } = await import('@supabase/ssr');
+  if (supabaseUrl && supabaseKey && !supabaseUrl.includes('placeholder')) {
+    try {
       const supabase = createServerClient(supabaseUrl, supabaseKey, {
         cookies: {
           getAll() {
             return request.cookies.getAll();
           },
           setAll(cookiesToSet: Array<{ name: string; value: string; options?: any }>) {
-            cookiesToSet.forEach(({ name, value }: { name: string; value: string }) => request.cookies.set(name, value));
+            cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
             response = NextResponse.next({
               request,
             });
-            cookiesToSet.forEach(({ name, value, options }: { name: string; value: string; options?: any }) =>
+            cookiesToSet.forEach(({ name, value, options }) =>
               response.cookies.set(name, value, options)
             );
           },
         },
       });
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (!error && user) {
         supabaseUser = user;
 
-        const { data: dbUser } = await supabase
-          .from('users')
-          .select('is_locked, role, email')
-          .eq('id', user.id)
-          .single();
+        try {
+          const { data: dbUser } = await supabase
+            .from('users')
+            .select('is_locked, role, email')
+            .eq('id', user.id)
+            .single();
 
-        if (dbUser) {
-          isUserLocked = Boolean(dbUser.is_locked);
-          userDbRole = dbUser.role || null;
+          if (dbUser) {
+            isUserLocked = Boolean(dbUser.is_locked);
+            userDbRole = dbUser.role || null;
+          }
+        } catch {
+          // Public users table query failure fallback
         }
       }
+    } catch {
+      // Supabase network or configuration issue fallback
     }
-  } catch (e) {
-    // If Supabase network issue occurs, continue with cookie check
   }
 
   // Handle locked account
@@ -77,9 +81,9 @@ export async function middleware(request: NextRequest) {
     return lockedResponse;
   }
 
-  // Unified authentication state: valid Supabase session OR valid session cookie
-  const isAuthenticated = Boolean(supabaseUser || userEmailCookie);
+  // Unified authentication state: valid Supabase session OR session cookie
   const effectiveEmail = (supabaseUser?.email || userEmailCookie || '').toLowerCase();
+  const isAuthenticated = Boolean(supabaseUser || userEmailCookie);
   const isAdmin = 
     effectiveEmail === ADMIN_EMAIL || 
     userDbRole === 'admin' || 
