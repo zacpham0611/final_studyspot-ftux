@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { store } from '@/lib/data/store';
 import { FTU_COORDINATES } from '@/lib/utils/distance';
 import { useToast } from '@/components/common/Toast';
-import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle } from 'lucide-react';
+import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle, Check, Compass } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 
@@ -25,6 +25,9 @@ function SuggestPlaceContent() {
   const [address, setAddress] = useState('');
   const [lat, setLat] = useState(FTU_COORDINATES.lat);
   const [lng, setLng] = useState(FTU_COORDINATES.lng);
+  const [latInput, setLatInput] = useState(FTU_COORDINATES.lat.toString());
+  const [lngInput, setLngInput] = useState(FTU_COORDINATES.lng.toString());
+  const [coordError, setCoordError] = useState<string | null>(null);
   const [description, setDescription] = useState('');
   const [openTime, setOpenTime] = useState('07:30');
   const [closeTime, setCloseTime] = useState('22:30');
@@ -33,7 +36,7 @@ function SuggestPlaceContent() {
   const [imageUrl, setImageUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Map Search State (OpenStreetMap Nominatim via server-side /api/places/search)
+  // Map Search State (OpenStreetMap Nominatim Search)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<
     Array<{ id: string; name: string; address: string; lat: number; lng: number }>
@@ -42,6 +45,16 @@ function SuggestPlaceContent() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  // Reverse Geocoding State (Map Click)
+  const [isReverseGeocoding, setIsReverseGeocoding] = useState(false);
+  const [geocodedLocation, setGeocodedLocation] = useState<{
+    name?: string;
+    address: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [reverseError, setReverseError] = useState<string | null>(null);
 
   const categories = store.getCategories();
   const amenities = store.getAmenities();
@@ -95,24 +108,118 @@ function SuggestPlaceContent() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Reusable Server-side Nominatim Reverse Geocoding
+  const executeReverseGeocode = async (targetLat: number, targetLng: number) => {
+    setIsReverseGeocoding(true);
+    setReverseError(null);
+    setGeocodedLocation(null);
+
+    try {
+      const res = await fetch(`/api/places/reverse?lat=${targetLat}&lng=${targetLng}`);
+      const json = await res.json();
+
+      if (res.ok && json.success && json.data) {
+        const found = json.data;
+        const resultItem = {
+          name: found.name || '',
+          address: found.address || '',
+          lat: targetLat,
+          lng: targetLng,
+        };
+
+        setGeocodedLocation(resultItem);
+
+        // Autofill Address field automatically
+        if (found.address) {
+          setAddress(found.address);
+        }
+
+        // If meaningful place name returned and place name field is empty, suggest it
+        if (found.name && !name.trim()) {
+          setName(found.name);
+        }
+      } else {
+        setReverseError(json.error || 'Không tìm thấy thông tin địa chỉ tại tọa độ này.');
+      }
+    } catch (err: any) {
+      console.warn('Reverse geocoding error:', err);
+      setReverseError('Lỗi kết nối định vị địa chỉ từ tọa độ.');
+    } finally {
+      setIsReverseGeocoding(false);
+    }
+  };
+
+  // Synchronize manual coordinate inputs (Validation: lat [-90, 90], lng [-180, 180])
+  useEffect(() => {
+    const trimmedLat = latInput.trim();
+    const trimmedLng = lngInput.trim();
+
+    if (!trimmedLat || !trimmedLng) {
+      setCoordError(null);
+      return;
+    }
+
+    const pLat = parseFloat(trimmedLat);
+    const pLng = parseFloat(trimmedLng);
+
+    if (isNaN(pLat) || pLat < -90 || pLat > 90) {
+      setCoordError('Vĩ độ (Latitude) phải là số từ -90 đến 90');
+      return;
+    }
+
+    if (isNaN(pLng) || pLng < -180 || pLng > 180) {
+      setCoordError('Kinh độ (Longitude) phải là số từ -180 đến 180');
+      return;
+    }
+
+    setCoordError(null);
+
+    // If coordinates are valid and changed from current map pin
+    if (pLat !== lat || pLng !== lng) {
+      setLat(pLat);
+      setLng(pLng);
+
+      const timer = setTimeout(() => {
+        executeReverseGeocode(pLat, pLng);
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [latInput, lngInput, lat, lng]);
+
+  // 1. Flow Search Place -> select result -> autofill name/address/coordinates -> flyTo
   const handleSelectPlace = (place: { name: string; address: string; lat: number; lng: number }) => {
-    // 1. Auto-fill Place Name
     if (place.name) {
       setName(place.name);
     }
-    // 2. Auto-fill Place Address
     if (place.address) {
       setAddress(place.address);
     }
-    // 3. Update Coordinates (triggers MapViewController in MapPinPicker to center & zoom)
-    if (place.lat && place.lng) {
+    if (place.lat != null && place.lng != null) {
       setLat(place.lat);
       setLng(place.lng);
+      setLatInput(place.lat.toString());
+      setLngInput(place.lng.toString());
+      setCoordError(null);
     }
-    // 4. Close dropdown
     setIsDropdownOpen(false);
     setSearchQuery(place.name || '');
+    setGeocodedLocation(null);
+    setReverseError(null);
     showToast(`Đã tự động điền "${place.name}" và ghim vị trí trên bản đồ!`, 'success');
+  };
+
+  // 2. Flow Map Click -> reverse geocode -> autofill address/coordinates -> confirm
+  const handleMapLocationSelect = (clickedLat: number, clickedLng: number) => {
+    // Move marker to clicked coordinates & update manual coordinate inputs
+    setLat(clickedLat);
+    setLng(clickedLng);
+    setLatInput(clickedLat.toFixed(6));
+    setLngInput(clickedLng.toFixed(6));
+    setCoordError(null);
+
+    // Trigger Server-side Nominatim Reverse Geocoding
+    executeReverseGeocode(clickedLat, clickedLng);
   };
 
   const handleAmenityToggle = (id: number) => {
@@ -128,6 +235,13 @@ function SuggestPlaceContent() {
       return;
     }
 
+    const finalLat = parseFloat(latInput);
+    const finalLng = parseFloat(lngInput);
+    if (isNaN(finalLat) || finalLat < -90 || finalLat > 90 || isNaN(finalLng) || finalLng < -180 || finalLng > 180) {
+      showToast('Tọa độ (Latitude/Longitude) không hợp lệ', 'error');
+      return;
+    }
+
     setSubmitting(true);
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
@@ -136,8 +250,8 @@ function SuggestPlaceContent() {
       name: name.trim(),
       category_id: categoryId,
       address: address.trim(),
-      lat,
-      lng,
+      lat: finalLat,
+      lng: finalLng,
       description: description.trim(),
       opening_hours: {
         monday: { open: openTime, close: closeTime },
@@ -157,8 +271,8 @@ function SuggestPlaceContent() {
     };
 
     let targetPlaceId = '';
-    let targetLat = lat;
-    let targetLng = lng;
+    let targetLat = finalLat;
+    let targetLng = finalLng;
 
     try {
       // 1. Submit to API endpoint (inserts into Supabase public.places and returns created record with UUID)
@@ -254,13 +368,70 @@ function SuggestPlaceContent() {
           />
         </div>
 
-        {/* Mini Map Coordinate Picker with Search Box */}
-        <div className="space-y-2">
+        {/* Map Location Selector with Search & Reverse Geocoding */}
+        <div className="space-y-3">
           <div className="flex justify-between items-center">
-            <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-burgundy" /> Ghim vị trí tọa độ trên bản đồ
+            <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-burgundy" /> 
+              <span>Vị trí trên bản đồ & Tọa độ GPS</span>
             </label>
-            <span className="text-[11px] text-gray-500">Bấm trực tiếp lên bản đồ để di chuyển ghim</span>
+            <span className="text-[11px] text-gray-500">Nhập tọa độ hoặc click bản đồ để tự động lấy địa chỉ</span>
+          </div>
+
+          {/* Manual Coordinate Inputs: Latitude & Longitude (Primary coordinate input) */}
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-border space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                <Compass className="w-3.5 h-3.5 text-burgundy" />
+                <span>Nhập tọa độ thủ công (Latitude & Longitude) *</span>
+              </span>
+              <span className="text-[11px] text-gray-500">VD: 21.028511, 105.804817</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                  Vĩ độ (Latitude) [-90 đến 90] *
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="VD: 21.028511"
+                  value={latInput}
+                  onChange={(e) => setLatInput(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-xs font-mono focus:outline-none bg-white transition-colors ${
+                    coordError && (isNaN(parseFloat(latInput)) || parseFloat(latInput) < -90 || parseFloat(latInput) > 90)
+                      ? 'border-rose-500 text-rose-700 focus:border-rose-600 ring-1 ring-rose-200'
+                      : 'border-border focus:border-burgundy'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-gray-700 block mb-1">
+                  Kinh độ (Longitude) [-180 đến 180] *
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="VD: 105.804817"
+                  value={lngInput}
+                  onChange={(e) => setLngInput(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-xs font-mono focus:outline-none bg-white transition-colors ${
+                    coordError && (isNaN(parseFloat(lngInput)) || parseFloat(lngInput) < -180 || parseFloat(lngInput) > 180)
+                      ? 'border-rose-500 text-rose-700 focus:border-rose-600 ring-1 ring-rose-200'
+                      : 'border-border focus:border-burgundy'
+                  }`}
+                />
+              </div>
+            </div>
+
+            {coordError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-500" />
+                <span className="font-medium">{coordError}</span>
+              </div>
+            )}
           </div>
 
           {/* Search Box positioned directly above map */}
@@ -340,15 +511,96 @@ function SuggestPlaceContent() {
             )}
           </div>
 
+          {/* Interactive Leaflet Map for click-to-locate */}
           <MapPinPicker
             lat={lat}
             lng={lng}
             onChange={(newLat, newLng) => {
-              setLat(newLat);
-              setLng(newLng);
+              handleMapLocationSelect(newLat, newLng);
             }}
             height="260px"
           />
+
+          {/* Reverse Geocode Loading Indicator */}
+          {isReverseGeocoding && (
+            <div className="p-3 bg-burgundy/5 border border-burgundy/20 rounded-xl flex items-center gap-2 text-xs text-burgundy animate-pulse">
+              <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+              <span>Đang định vị và giải mã địa chỉ từ điểm đã bấm trên bản đồ...</span>
+            </div>
+          )}
+
+          {/* Reverse Geocode Error Notice */}
+          {reverseError && !isReverseGeocoding && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-2 text-xs text-amber-800">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <span>{reverseError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReverseError(null)}
+                className="text-amber-500 hover:text-amber-700 cursor-pointer p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Confirmation State: "Location found: [address]" with "Use this location" button */}
+          {geocodedLocation && !isReverseGeocoding && (
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2.5 text-xs shadow-2xs">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <MapPin className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-emerald-900 flex items-center gap-1.5 flex-wrap">
+                      <span>Location found:</span>
+                      <span className="font-normal text-emerald-800 break-words">
+                        {geocodedLocation.address}
+                      </span>
+                    </div>
+                    {geocodedLocation.name && (
+                      <div className="text-emerald-700 text-[11px] mt-1">
+                        Gợi ý tên: <span className="font-semibold text-emerald-900">{geocodedLocation.name}</span>
+                      </div>
+                    )}
+                    <div className="text-[10px] font-mono text-emerald-600 mt-0.5">
+                      Tọa độ: {geocodedLocation.lat.toFixed(5)}, {geocodedLocation.lng.toFixed(5)}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setGeocodedLocation(null)}
+                  className="text-emerald-500 hover:text-emerald-700 p-0.5 cursor-pointer flex-shrink-0"
+                  title="Đóng thông báo"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1 border-t border-emerald-200/60">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (geocodedLocation.address) setAddress(geocodedLocation.address);
+                    if (geocodedLocation.name && !name.trim()) setName(geocodedLocation.name);
+                    setLat(geocodedLocation.lat);
+                    setLng(geocodedLocation.lng);
+                    setLatInput(geocodedLocation.lat.toString());
+                    setLngInput(geocodedLocation.lng.toString());
+                    setCoordError(null);
+                    showToast('Đã áp dụng địa chỉ và tọa độ vào biểu mẫu!', 'success');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Use this location</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Hours & Price */}
@@ -433,7 +685,7 @@ function SuggestPlaceContent() {
             placeholder="https://images.unsplash.com/..."
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
-            className="w-full px-3.5 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
           />
         </div>
 

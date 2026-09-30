@@ -40,27 +40,62 @@ export default function AdminProposalsPage() {
   useEffect(() => {
     loadData();
     store.loadFromSupabase().then(loadData);
+    const unsubscribe = store.subscribe(() => {
+      loadData();
+    });
+    return () => unsubscribe();
   }, []);
 
-  const handleApprove = (placeId: string, placeName: string) => {
+  const handleApprove = async (placeId: string, placeName: string) => {
+    // 1. Optimistic update
     store.approveProposal(placeId);
     loadData();
     setActiveDrawerPlace(null);
     showToast(`Đã duyệt xuất bản địa điểm: "${placeName}" và gửi thông báo tới người đề xuất!`, 'success');
+
+    // 2. Persist to Supabase
+    try {
+      await fetch('/api/places', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placeId, status: 'approved' }),
+      });
+      await store.loadFromSupabase();
+      loadData();
+    } catch (e: any) {
+      console.warn('Approve proposal sync notice:', e.message);
+    }
   };
 
-  const handleConfirmReject = () => {
+  const handleConfirmReject = async () => {
     if (!rejectModalPlace) return;
     if (!rejectReason.trim()) {
       showToast('Vui lòng nhập lý do từ chối', 'error');
       return;
     }
-    store.rejectProposal(rejectModalPlace.id, rejectReason.trim());
+    const targetPlaceId = rejectModalPlace.id;
+    const reason = rejectReason.trim();
+
+    // 1. Optimistic update
+    store.rejectProposal(targetPlaceId, reason);
     setRejectModalPlace(null);
     setRejectReason('');
     setActiveDrawerPlace(null);
     loadData();
     showToast('Đã từ chối đề xuất và gửi thông báo giải thích cho sinh viên', 'info');
+
+    // 2. Persist to Supabase
+    try {
+      await fetch('/api/places', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placeId: targetPlaceId, status: 'rejected', rejectReason: reason }),
+      });
+      await store.loadFromSupabase();
+      loadData();
+    } catch (e: any) {
+      console.warn('Reject proposal sync notice:', e.message);
+    }
   };
 
   const handleRemoveProposalImage = (index: number) => {

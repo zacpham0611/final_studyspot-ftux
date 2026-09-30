@@ -64,13 +64,13 @@ function HomePageContent() {
     }
   }, [searchParams]);
 
-  // Focus on proposed / targeted place on load
+  // Focus on proposed / targeted place on load (ONLY if approved)
   useEffect(() => {
     if (paramPlaceId) {
       setSelectedPlaceId(paramPlaceId);
 
       const localPlace = store.getPlaceById(paramPlaceId);
-      if (localPlace) {
+      if (localPlace && localPlace.status === 'approved') {
         setPlaces((prev) => {
           if (!prev.some((p) => p.id === paramPlaceId)) {
             return [localPlace, ...prev];
@@ -97,15 +97,20 @@ function HomePageContent() {
               view_count: supaData.view_count || 0,
             };
             store.savePlace(formatted);
-            setPlaces((prev) => {
-              const idx = prev.findIndex((p) => p.id === paramPlaceId);
-              if (idx !== -1) {
-                const next = [...prev];
-                next[idx] = formatted;
-                return next;
-              }
-              return [formatted, ...prev];
-            });
+            if (formatted.status === 'approved') {
+              setPlaces((prev) => {
+                const idx = prev.findIndex((p) => p.id === paramPlaceId);
+                if (idx !== -1) {
+                  const next = [...prev];
+                  next[idx] = formatted;
+                  return next;
+                }
+                return [formatted, ...prev];
+              });
+            } else {
+              // Pending or rejected places must NEVER appear on the public map
+              setPlaces((prev) => prev.filter((p) => p.id !== paramPlaceId));
+            }
           }
         } catch (e) {
           console.warn('Place fetch notice:', e);
@@ -126,6 +131,10 @@ function HomePageContent() {
 
   useEffect(() => {
     loadData();
+    const unsubscribe = store.subscribe(() => {
+      loadData();
+    });
+    return () => unsubscribe();
   }, [filterOptions]);
 
   // Polling crowd data every 60 seconds

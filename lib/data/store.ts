@@ -303,7 +303,8 @@ class StudySpotStore {
     const all = this.getEnrichedPlaces(userLat, userLng);
 
     return all.filter((p) => {
-      if (p.status !== 'approved' && this.currentUser?.role !== 'admin') {
+      // ONLY approved places can EVER appear on public main page & public map
+      if (p.status !== 'approved') {
         return false;
       }
 
@@ -878,6 +879,7 @@ class StudySpotStore {
     if (p) {
       p.status = 'approved';
       p.approved_at = new Date().toISOString();
+      p.reject_reason = undefined;
       
       // Notify creator
       if (p.created_by) {
@@ -888,6 +890,17 @@ class StudySpotStore {
         );
       }
       this.persist();
+      this.notify();
+
+      if (typeof window !== 'undefined') {
+        supabase.from('places').update({
+          status: 'approved',
+          approved_at: p.approved_at,
+          reject_reason: null,
+        }).eq('id', placeId).then(({ error }) => {
+          if (error) console.warn('Supabase approve proposal error:', error.message);
+        });
+      }
       return true;
     }
     return false;
@@ -907,6 +920,16 @@ class StudySpotStore {
         );
       }
       this.persist();
+      this.notify();
+
+      if (typeof window !== 'undefined') {
+        supabase.from('places').update({
+          status: 'rejected',
+          reject_reason: reason,
+        }).eq('id', placeId).then(({ error }) => {
+          if (error) console.warn('Supabase reject proposal error:', error.message);
+        });
+      }
       return true;
     }
     return false;
@@ -924,6 +947,16 @@ class StudySpotStore {
       if (rejectReason !== undefined) p.reject_reason = rejectReason;
       if (status === 'approved' && !p.approved_at) p.approved_at = new Date().toISOString();
       this.persist();
+      this.notify();
+
+      if (typeof window !== 'undefined') {
+        const payload: any = { status };
+        if (rejectReason !== undefined) payload.reject_reason = rejectReason;
+        if (status === 'approved' && p.approved_at) payload.approved_at = p.approved_at;
+        supabase.from('places').update(payload).eq('id', placeId).then(({ error }) => {
+          if (error) console.warn('Supabase updatePlaceStatus error:', error.message);
+        });
+      }
       return true;
     }
     return false;
@@ -934,6 +967,13 @@ class StudySpotStore {
     if (idx !== -1) {
       this.places.splice(idx, 1);
       this.persist();
+      this.notify();
+
+      if (typeof window !== 'undefined') {
+        supabase.from('places').delete().eq('id', placeId).then(({ error }) => {
+          if (error) console.warn('Supabase deletePlace error:', error.message);
+        });
+      }
       return true;
     }
     return false;

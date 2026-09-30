@@ -9,6 +9,46 @@ export async function GET(request: NextRequest) {
   const query = searchParams.get('q') || undefined;
   const categoryId = searchParams.get('category') ? Number(searchParams.get('category')) : undefined;
 
+  // 1. Query Supabase directly if connected (ONLY status = 'approved')
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
+    try {
+      const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+        auth: { persistSession: false },
+      });
+      let q = supabaseAdmin.from('places').select('*').eq('status', 'approved');
+      if (categoryId) {
+        q = q.eq('category_id', categoryId);
+      }
+      const { data, error } = await q;
+      if (!error && data) {
+        let places = data.map((dp: any) => ({
+          ...dp,
+          opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : dp.opening_hours,
+          price_level: dp.price_level || 2,
+          images: dp.images || [],
+          view_count: dp.view_count || 0,
+        }));
+
+        if (query) {
+          const lowerQ = query.toLowerCase();
+          places = places.filter((p: any) =>
+            p.name?.toLowerCase().includes(lowerQ) ||
+            p.address?.toLowerCase().includes(lowerQ) ||
+            p.description?.toLowerCase().includes(lowerQ)
+          );
+        }
+
+        return NextResponse.json({ places, count: places.length });
+      }
+    } catch (e: any) {
+      console.warn('GET /api/places Supabase query notice:', e.message);
+    }
+  }
+
+  // 2. Fallback to store (which strictly filters status === 'approved')
   const places = store.filterPlaces({
     query,
     categoryId,
@@ -114,3 +154,77 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: e.message }, { status: 400 });
   }
 }
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { placeId, status, rejectReason } = body;
+
+    if (!placeId || !status) {
+      return NextResponse.json(
+        { success: false, error: 'Thiếu placeId hoặc status' },
+        { status: 400 }
+      );
+    }
+
+    if (!['pending', 'approved', 'rejected', 'hidden'].includes(status)) {
+      return NextResponse.json(
+        { success: false, error: 'Trạng thái không hợp lệ' },
+        { status: 400 }
+      );
+    }
+
+    // 1. Update in-memory store
+    if (status === 'approved') {
+      store.approveProposal(placeId);
+    } else if (status === 'rejected') {
+      store.rejectProposal(placeId, rejectReason || 'Không đáp ứng tiêu chuẩn.');
+    } else {
+      store.updatePlaceStatus(placeId, status, rejectReason);
+    }
+
+    // 2. Persist directly to Supabase public.places
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+          auth: { persistSession: false },
+        });
+
+        const updateData: any = {
+          status,
+        };
+        if (status === 'approved') {
+          updateData.approved_at = new Date().toISOString();
+          updateData.reject_reason = null;
+        } else if (status === 'rejected') {
+          updateData.reject_reason = rejectReason || null;
+        }
+
+        const { data, error } = await supabaseAdmin
+          .from('places')
+          .update(updateData)
+          .eq('id', placeId)
+          .select()
+          .single();
+
+        if (error) {
+          console.warn('Supabase places status update error:', error.message);
+          return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true, place: data });
+      } catch (dbErr: any) {
+        console.warn('Supabase places status update network error:', dbErr.message);
+      }
+    }
+
+    return NextResponse.json({ success: true, placeId, status });
+  } catch (e: any) {
+    console.error('PATCH /api/places exception:', e.message);
+    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+  }
+}
+
