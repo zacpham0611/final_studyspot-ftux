@@ -29,44 +29,32 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
+
   useEffect(() => {
     const checkRole = async () => {
       // 1. Check local store user
       const localUser = store.getCurrentUser();
       
-      // Auto-grant admin if email is default admin
-      if (localUser?.email === 'admin123@ftu.edu.vn') {
-        localUser.role = 'admin';
-        store.setCurrentUser(localUser);
+      if (localUser?.email?.toLowerCase() === ADMIN_EMAIL || localUser?.role === 'admin') {
+        if (localUser.role !== 'admin') {
+          localUser.role = 'admin';
+          store.setCurrentUser(localUser);
+        }
         setCurrentUser(localUser);
         setIsAdmin(true);
         setLoading(false);
         return;
       }
 
-      if (localUser?.role === 'admin') {
-        setCurrentUser(localUser);
-        setIsAdmin(true);
-        setLoading(false);
-        return;
-      }
-
-      // 2. Query Supabase users table directly
+      // 2. Query Supabase users or profiles table directly
       try {
         if (supabase) {
           const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            const { data: profile } = await supabase
-              .from('users')
-              .select('role')
-              .eq('id', user.id)
-              .single();
-
-            if (profile?.role === 'admin') {
-              setIsAdmin(true);
-              setLoading(false);
-              return;
-            }
+          if (user && user.email?.toLowerCase() === ADMIN_EMAIL) {
+            setIsAdmin(true);
+            setLoading(false);
+            return;
           }
         }
       } catch (e) {
@@ -76,10 +64,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       setCurrentUser(localUser);
       setIsAdmin(false);
       setLoading(false);
+      // Auto-redirect unauthorized users to home page
+      router.replace('/');
     };
 
     checkRole();
-  }, [pathname]);
+  }, [pathname, router, ADMIN_EMAIL]);
 
   const navItems = [
     { label: 'Dashboard Tổng quan', href: '/admin', icon: LayoutDashboard },
@@ -89,13 +79,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { label: 'Quản trị Người dùng', href: '/admin/nguoi-dung', icon: Users },
     { label: 'Danh mục & Tiện ích', href: '/admin/danh-muc', icon: Tags },
   ];
-
-  const handleMakeAdmin = () => {
-    store.loginAs('admin');
-    const updated = store.getCurrentUser();
-    setCurrentUser(updated);
-    setIsAdmin(true);
-  };
 
   if (loading) {
     return (
@@ -108,30 +91,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  // If not admin, provide prompt to log in as default admin
+  // If not admin, redirecting to home
   if (!isAdmin) {
     return (
-      <div className="flex-1 flex items-center justify-center p-4 min-h-[calc(100vh-140px)]">
-        <div className="bg-white max-w-md p-8 rounded-2xl border border-rose-200 shadow-elevated text-center space-y-4">
-          <AlertTriangle className="w-12 h-12 text-rose-500 mx-auto" />
-          <h2 className="text-xl font-bold text-gray-900">Yêu cầu quyền Quản trị viên FTU</h2>
-          <p className="text-xs text-gray-600">
-            Bạn đang truy cập với tài khoản không có quyền Admin. Hãy đăng nhập tài khoản <code>admin123@ftu.edu.vn</code> (mật khẩu <code>123456</code>).
-          </p>
-          <div className="pt-2 flex flex-col gap-2">
-            <button
-              onClick={handleMakeAdmin}
-              className="py-2.5 px-4 rounded-xl bg-burgundy text-white text-xs font-bold shadow-sm hover:bg-burgundy-hover transition-colors cursor-pointer"
-            >
-              Vào vai Admin ngay (admin123@ftu.edu.vn)
-            </button>
-            <Link
-              href="/"
-              className="py-2.5 px-4 rounded-xl border border-border text-xs font-semibold text-gray-700 hover:bg-slate-50"
-            >
-              Quay lại trang chủ
-            </Link>
-          </div>
+      <div className="flex-1 flex items-center justify-center p-8 min-h-[500px]">
+        <div className="flex flex-col items-center gap-2 text-rose-600 text-xs">
+          <AlertTriangle className="w-8 h-8 text-rose-500" />
+          <span>Bạn không có quyền truy cập trang Quản trị. Đang chuyển hướng về Trang chủ...</span>
         </div>
       </div>
     );

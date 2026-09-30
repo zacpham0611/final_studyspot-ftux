@@ -1,6 +1,6 @@
 // TypeScript Database Definitions for STUDYSPOT FTU
 
-export type UserRole = 'user' | 'admin';
+export type UserRole = 'user' | 'admin' | 'student';
 export type PlaceStatus = 'pending' | 'approved' | 'rejected' | 'hidden';
 export type CrowdLevel = 1 | 2 | 3; // 1: Vắng, 2: Vừa, 3: Đông
 export type CrowdStatus = 'empty' | 'medium' | 'full' | 'unknown';

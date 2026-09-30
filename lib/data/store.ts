@@ -59,6 +59,9 @@ class StudySpotStore {
         const storedReports = localStorage.getItem('studyspot_reports_v2');
         if (storedReports) this.reviewReports = JSON.parse(storedReports);
 
+        const storedUsers = localStorage.getItem('studyspot_users_v2');
+        if (storedUsers) this.users = JSON.parse(storedUsers);
+
         const storedHelpful = localStorage.getItem('studyspot_helpful_v2');
         if (storedHelpful) this.helpfulVotes = new Set(JSON.parse(storedHelpful));
 
@@ -97,6 +100,7 @@ class StudySpotStore {
         localStorage.setItem('studyspot_reviews_v2', JSON.stringify(this.reviews));
         localStorage.setItem('studyspot_notifs_v2', JSON.stringify(this.notifications));
         localStorage.setItem('studyspot_reports_v2', JSON.stringify(this.reviewReports));
+        localStorage.setItem('studyspot_users_v2', JSON.stringify(this.users));
         localStorage.setItem('studyspot_helpful_v2', JSON.stringify(Array.from(this.helpfulVotes)));
         
         const favsObj: { [k: string]: string[] } = {};
@@ -131,6 +135,12 @@ class StudySpotStore {
 
   setCurrentUser(user: UserProfile | null) {
     this.currentUser = user;
+    if (user) {
+      const idx = this.users.findIndex((u) => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
+      if (idx !== -1) {
+        this.users[idx] = { ...this.users[idx], ...user };
+      }
+    }
     this.persist();
   }
 
@@ -156,17 +166,38 @@ class StudySpotStore {
       return { success: true, user: this.currentUser };
     }
 
-    // If new user, create on the fly (no confirm needed)
+    // Unregistered accounts cannot log in
+    return {
+      success: false,
+      message: 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
+    };
+  }
+
+  registerUser(
+    email: string,
+    pass: string,
+    fullName: string,
+    role: string = 'student'
+  ): { success: boolean; user?: UserProfile; message?: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    const existing = this.users.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (existing) {
+      return {
+        success: false,
+        message: 'Email này đã tồn tại trong hệ thống. Vui lòng đăng nhập!',
+      };
+    }
+
     const newUser: UserProfile = {
       id: `user-${Date.now()}`,
-      full_name: cleanEmail.split('@')[0],
+      full_name: fullName.trim(),
       email: cleanEmail,
-      role: 'user',
+      role: role === 'admin' ? 'admin' : 'student',
       is_locked: false,
       created_at: new Date().toISOString(),
     };
+
     this.users.push(newUser);
-    this.currentUser = newUser;
     this.persist();
     return { success: true, user: newUser };
   }

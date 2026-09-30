@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { store } from '@/lib/data/store';
 import { UserProfile, Review, Checkin, Place } from '@/lib/types/database';
 import { useToast } from '@/components/common/Toast';
+import { supabase } from '@/lib/supabase/client';
 import { 
   User, 
   Mail, 
@@ -15,13 +17,18 @@ import {
   Camera, 
   CheckCircle2, 
   Clock, 
-  XCircle,
-  MapPin,
-  ArrowRight
+  XCircle, 
+  MapPin, 
+  ArrowRight,
+  Upload,
+  Loader2
 } from 'lucide-react';
 
 export default function ProfilePage() {
+  const router = useRouter();
   const { showToast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'reviews' | 'checkins' | 'proposals'>('reviews');
 
@@ -30,9 +37,9 @@ export default function ProfilePage() {
   const [myCheckins, setMyCheckins] = useState<Checkin[]>([]);
   const [myProposals, setMyProposals] = useState<Place[]>([]);
 
-  // Avatar edit
-  const [newAvatarUrl, setNewAvatarUrl] = useState('');
-  const [showAvatarInput, setShowAvatarInput] = useState(false);
+  // Avatar Upload States
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const loadProfile = () => {
     const user = store.getCurrentUser();
@@ -56,14 +63,119 @@ export default function ProfilePage() {
     loadProfile();
   }, []);
 
-  const handleUpdateAvatar = () => {
-    if (currentUser && newAvatarUrl.trim()) {
-      const updated = { ...currentUser, avatar_url: newAvatarUrl.trim() };
-      store.setCurrentUser(updated);
-      setCurrentUser(updated);
-      setShowAvatarInput(false);
-      setNewAvatarUrl('');
-      showToast('Cập nhật ảnh đại diện thành công!', 'success');
+  // Trigger file selection dialog
+  const handleAvatarClick = () => {
+    if (isUploading) return;
+    fileInputRef.current?.click();
+  };
+
+  // Handle file chosen from device
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      showToast('Vui lòng chọn một file hình ảnh (JPG, PNG, WEBP,...)', 'error');
+      return;
+    }
+
+    // Validate size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Kích thước ảnh tối đa là 5MB', 'error');
+      return;
+    }
+
+    // 1. Instant preview
+    const localPreview = URL.createObjectURL(file);
+    setPreviewUrl(localPreview);
+
+    // 2. Upload file to Supabase Storage
+    await handleAvatarUpload(file);
+
+    // Reset input value so same file can be re-selected if needed
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Upload Logic to Supabase Storage & Database
+  const handleAvatarUpload = async (file: File) => {
+    if (!currentUser) return;
+    setIsUploading(true);
+
+    const userId = currentUser.id;
+    const fileExt = file.name.split('.').pop() || 'jpg';
+    const filePath = `${userId}/${Date.now()}.${fileExt}`;
+
+    let finalAvatarUrl = '';
+
+    try {
+      // 1. Upload to Supabase Storage bucket 'avatars'
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.warn('Supabase storage upload notice:', uploadError.message);
+        // Fallback: Read file as Data URL (base64) so user avatar updates reliably even in offline/demo mode
+        finalAvatarUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      } else {
+        // 2. Get Public URL from Supabase Storage
+        const { data: { publicUrl } } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(filePath);
+
+        finalAvatarUrl = publicUrl;
+      }
+
+      if (finalAvatarUrl) {
+        // 3. Update profiles table in Supabase
+        try {
+          await supabase
+            .from('profiles')
+            .update({ avatar_url: finalAvatarUrl })
+            .eq('id', userId);
+        } catch (dbErr) {
+          console.warn('Profiles table update notice:', dbErr);
+        }
+
+        // Also update users table for consistency
+        try {
+          await supabase
+            .from('users')
+            .update({ avatar_url: finalAvatarUrl })
+            .eq('id', userId);
+        } catch (dbErr) {
+          console.warn('Users table update notice:', dbErr);
+        }
+
+        // 4. Update client store & component state
+        const updatedUser: UserProfile = {
+          ...currentUser,
+          avatar_url: finalAvatarUrl,
+        };
+        store.setCurrentUser(updatedUser);
+        setCurrentUser(updatedUser);
+        setPreviewUrl(finalAvatarUrl);
+
+        showToast('Cập nhật ảnh đại diện thành công!', 'success');
+
+        // 5. Refresh page state & server components
+        router.refresh();
+      }
+    } catch (err: any) {
+      console.error('Avatar upload exception:', err);
+      showToast('Đã xảy ra lỗi khi tải ảnh lên. Vui lòng thử lại!', 'error');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -82,26 +194,74 @@ export default function ProfilePage() {
     );
   }
 
+  const displayedAvatar =
+    previewUrl ||
+    currentUser.avatar_url ||
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80';
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-8 pb-24 md:pb-12">
+      {/* Hidden File Input for Device Image Selection */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+
       {/* Profile Card Header */}
       <div className="bg-white p-6 sm:p-8 rounded-2xl border border-border shadow-soft flex flex-col sm:flex-row items-center sm:items-start gap-6">
-        <div className="relative group">
+        {/* Avatar Container with Upload & Preview Overlay */}
+        <div 
+          onClick={handleAvatarClick}
+          className="relative group cursor-pointer flex-shrink-0"
+          title="Bấm để tải ảnh đại diện từ máy tính"
+        >
           <img
-            src={currentUser.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80'}
+            src={displayedAvatar}
             alt={currentUser.full_name}
-            className="w-24 h-24 rounded-2xl object-cover ring-4 ring-burgundy/10 shadow-md"
+            className={`w-28 h-28 rounded-2xl object-cover ring-4 ring-burgundy/10 shadow-md transition-all ${
+              isUploading ? 'opacity-40 blur-[1px]' : 'group-hover:ring-burgundy/30'
+            }`}
           />
+
+          {/* Uploading Spinner Overlay */}
+          {isUploading && (
+            <div className="absolute inset-0 bg-black/40 rounded-2xl flex flex-col items-center justify-center text-white gap-1.5 z-10">
+              <Loader2 className="w-6 h-6 animate-spin text-white" />
+              <span className="text-[10px] font-bold tracking-tight">Đang tải...</span>
+            </div>
+          )}
+
+          {/* Hover Overlay Hint */}
+          {!isUploading && (
+            <div className="absolute inset-0 bg-black/25 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <Upload className="w-6 h-6 text-white drop-shadow-md" />
+            </div>
+          )}
+
+          {/* Camera Action Button */}
           <button
-            onClick={() => setShowAvatarInput(!showAvatarInput)}
-            className="absolute -bottom-2 -right-2 p-2 bg-burgundy text-white rounded-xl shadow-md hover:bg-burgundy-hover transition-colors"
-            title="Đổi ảnh đại diện"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAvatarClick();
+            }}
+            disabled={isUploading}
+            className="absolute -bottom-2 -right-2 p-2.5 bg-burgundy text-white rounded-xl shadow-md hover:bg-burgundy-hover transition-colors z-20 cursor-pointer disabled:opacity-50"
+            title="Tải ảnh từ máy tính"
           >
-            <Camera className="w-3.5 h-3.5" />
+            {isUploading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Camera className="w-3.5 h-3.5" />
+            )}
           </button>
         </div>
 
-        <div className="flex-1 text-center sm:text-left space-y-1">
+        {/* User Details & Action Button */}
+        <div className="flex-1 text-center sm:text-left space-y-1.5">
           <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
             <h1 className="text-2xl font-extrabold text-gray-900">{currentUser.full_name}</h1>
             <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-burgundy-light text-burgundy border border-burgundy-border">
@@ -114,29 +274,32 @@ export default function ProfilePage() {
             {currentUser.email}
           </p>
 
-          <p className="text-[11px] text-gray-400 flex items-center justify-center sm:justify-start gap-1 pt-1">
+          <p className="text-[11px] text-gray-400 flex items-center justify-center sm:justify-start gap-1 pt-0.5">
             <Calendar className="w-3.5 h-3.5" />
             Tham gia: {new Date(currentUser.created_at).toLocaleDateString('vi-VN')}
           </p>
 
-          {/* Avatar edit input popup */}
-          {showAvatarInput && (
-            <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-border flex gap-2">
-              <input
-                type="url"
-                placeholder="Dán link ảnh đại diện mới..."
-                value={newAvatarUrl}
-                onChange={(e) => setNewAvatarUrl(e.target.value)}
-                className="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs focus:outline-none focus:border-burgundy"
-              />
-              <button
-                onClick={handleUpdateAvatar}
-                className="px-3 py-1.5 bg-burgundy text-white text-xs font-bold rounded-lg"
-              >
-                Lưu
-              </button>
-            </div>
-          )}
+          {/* Choose File from Computer Button */}
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleAvatarClick}
+              disabled={isUploading}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-gray-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-burgundy" />
+                  <span>Đang tải ảnh lên...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-3.5 h-3.5 text-burgundy" />
+                  <span>Chọn ảnh từ máy tính</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -146,7 +309,7 @@ export default function ProfilePage() {
         <div className="grid grid-cols-3 border-b border-border bg-slate-50 text-center font-bold text-xs">
           <button
             onClick={() => setActiveTab('reviews')}
-            className={`py-3.5 flex items-center justify-center gap-1.5 transition-colors ${
+            className={`py-3.5 flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
               activeTab === 'reviews'
                 ? 'bg-white text-burgundy border-b-2 border-burgundy font-extrabold'
                 : 'text-gray-500 hover:text-gray-800'
@@ -158,7 +321,7 @@ export default function ProfilePage() {
 
           <button
             onClick={() => setActiveTab('checkins')}
-            className={`py-3.5 flex items-center justify-center gap-1.5 transition-colors ${
+            className={`py-3.5 flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
               activeTab === 'checkins'
                 ? 'bg-white text-burgundy border-b-2 border-burgundy font-extrabold'
                 : 'text-gray-500 hover:text-gray-800'
@@ -170,7 +333,7 @@ export default function ProfilePage() {
 
           <button
             onClick={() => setActiveTab('proposals')}
-            className={`py-3.5 flex items-center justify-center gap-1.5 transition-colors ${
+            className={`py-3.5 flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
               activeTab === 'proposals'
                 ? 'bg-white text-burgundy border-b-2 border-burgundy font-extrabold'
                 : 'text-gray-500 hover:text-gray-800'

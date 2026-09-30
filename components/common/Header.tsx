@@ -11,7 +11,6 @@ import {
   LogOut, 
   ChevronDown,
   Coffee,
-  Check,
   Bell,
   CheckCheck,
   ExternalLink
@@ -41,6 +40,9 @@ export function Header() {
     }
   };
 
+  const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.email?.toLowerCase() === ADMIN_EMAIL;
+
   useEffect(() => {
     loadUserData();
   }, [pathname]);
@@ -55,21 +57,6 @@ export function Header() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const handleRoleSwitch = (role: 'user' | 'admin') => {
-    const updated = store.loginAs(role);
-    setCurrentUser(updated);
-    setDropdownOpen(false);
-    showToast(
-      `Đã chuyển sang: ${role === 'admin' ? 'Quản trị viên FTU (admin123@ftu.edu.vn)' : 'Sinh viên FTU'}`,
-      'success'
-    );
-    if (role === 'admin') {
-      router.push('/admin');
-    } else if (pathname.startsWith('/admin')) {
-      router.push('/');
-    }
-  };
 
   const handleLogout = () => {
     store.logout();
@@ -140,7 +127,7 @@ export function Header() {
             <PlusCircle className="w-4 h-4 text-burgundy" />
             Đề xuất quán
           </Link>
-          {currentUser?.role === 'admin' && (
+          {isAdmin && (
             <Link
               href="/admin"
               className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${
@@ -195,31 +182,6 @@ export function Header() {
                     </span>
                   </div>
 
-                  {/* Role quick switcher */}
-                  <div className="px-3 py-2 bg-slate-50 border-b border-border/60">
-                    <p className="text-[11px] font-semibold text-text-secondary mb-1">Chuyển vai trò thử nghiệm:</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button
-                        onClick={() => handleRoleSwitch('user')}
-                        className={`text-xs py-1 px-2 rounded-lg font-medium flex items-center justify-center gap-1 transition-colors ${
-                          currentUser.role === 'user' ? 'bg-white text-burgundy shadow-sm border border-burgundy' : 'text-gray-600 hover:bg-white'
-                        }`}
-                      >
-                        {currentUser.role === 'user' && <Check className="w-3 h-3 text-burgundy" />}
-                        Sinh viên
-                      </button>
-                      <button
-                        onClick={() => handleRoleSwitch('admin')}
-                        className={`text-xs py-1 px-2 rounded-lg font-medium flex items-center justify-center gap-1 transition-colors ${
-                          currentUser.role === 'admin' ? 'bg-burgundy text-white shadow-sm' : 'text-gray-600 hover:bg-white'
-                        }`}
-                      >
-                        {currentUser.role === 'admin' && <Check className="w-3 h-3 text-white" />}
-                        Admin
-                      </button>
-                    </div>
-                  </div>
-
                   <div className="py-1">
                     <Link
                       href="/ho-so"
@@ -237,7 +199,7 @@ export function Header() {
                       <Heart className="w-4 h-4 text-rose-500" />
                       Quán yêu thích
                     </Link>
-                    {currentUser.role === 'admin' && (
+                    {isAdmin && (
                       <Link
                         href="/admin"
                         onClick={() => setDropdownOpen(false)}
