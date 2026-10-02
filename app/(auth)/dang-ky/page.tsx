@@ -59,16 +59,22 @@ export default function RegisterPage() {
       });
 
       if (error) {
-        // If Supabase reports user already registered
         if (error.message.includes('already registered') || error.message.includes('unique')) {
           setErrorMessage('Email này đã được đăng ký trong hệ thống. Vui lòng đăng nhập!');
-          setLoading(false);
-          return;
+        } else {
+          setErrorMessage(error.message || 'Lỗi đăng ký tài khoản từ hệ thống xác thực. Vui lòng thử lại!');
         }
-        console.warn('Supabase Auth warning during signup:', error.message);
+        setLoading(false);
+        return;
       }
 
-      const userId = data?.user?.id || `user-${Date.now()}`;
+      if (!data?.user) {
+        setErrorMessage('Không thể tạo tài khoản trên hệ thống xác thực. Vui lòng thử lại!');
+        setLoading(false);
+        return;
+      }
+
+      const userId = data.user.id;
 
       // 3. Save to Supabase users table (using client upsert + server-side sync endpoint)
       try {
@@ -99,15 +105,10 @@ export default function RegisterPage() {
         console.warn('User server sync notice:', syncErr);
       }
 
-      // 4. Register in local store (for client persistence & instant login capability)
-      const storeRes = store.registerUser(cleanEmail, password, cleanFullName, 'student');
-      if (!storeRes.success && storeRes.message && !data?.user) {
-        setErrorMessage(storeRes.message);
-        setLoading(false);
-        return;
-      }
+      // 4. Register in local store with real Supabase UUID
+      store.registerUser(cleanEmail, password, cleanFullName, 'student', userId);
 
-      // 5. Notify success and redirect to login page (KHÔNG tự động vào thẳng giao diện nếu chưa qua bước đăng nhập)
+      // 5. Notify success and redirect to login page
       const successMsg = 'Đăng ký tài khoản thành công! Vui lòng đăng nhập để tiếp tục.';
       setSuccessMessage(successMsg);
       showToast(successMsg, 'success');
@@ -117,18 +118,8 @@ export default function RegisterPage() {
       }, 1200);
     } catch (err: any) {
       console.error('Registration error:', err);
-      // Fallback local store registration
-      const storeRes = store.registerUser(cleanEmail, password, cleanFullName, 'student');
-      if (storeRes.success) {
-        const successMsg = 'Đăng ký tài khoản thành công! Vui lòng đăng nhập để tiếp tục.';
-        setSuccessMessage(successMsg);
-        showToast(successMsg, 'success');
-        setTimeout(() => {
-          router.push('/dang-nhap');
-        }, 1200);
-      } else {
-        setErrorMessage(storeRes.message || 'Đã xảy ra lỗi trong quá trình đăng ký. Vui lòng thử lại!');
-      }
+      setErrorMessage(err.message || 'Đã xảy ra lỗi trong quá trình đăng ký. Vui lòng thử lại!');
+      showToast(err.message || 'Đã xảy ra lỗi trong quá trình đăng ký', 'error');
     } finally {
       setLoading(false);
     }

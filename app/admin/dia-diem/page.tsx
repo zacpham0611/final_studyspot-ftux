@@ -65,7 +65,7 @@ export default function AdminPlacesPage() {
     store.loadFromSupabase().then(loadData);
   }, []);
 
-  const handleToggleHide = (place: Place) => {
+  const handleToggleHide = async (place: Place) => {
     const nextStatus = place.status === 'hidden' ? 'approved' : 'hidden';
     store.updatePlaceStatus(place.id, nextStatus);
     loadData();
@@ -73,13 +73,23 @@ export default function AdminPlacesPage() {
       `Đã chuyển trạng thái sang: ${nextStatus === 'hidden' ? 'Đang ẩn' : 'Đã duyệt / Hiển thị'}`,
       'info'
     );
+    try {
+      await fetch('/api/places', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placeId: place.id, status: nextStatus }),
+      });
+    } catch (e) {}
   };
 
-  const handleDelete = (placeId: string, placeName: string) => {
+  const handleDelete = async (placeId: string, placeName: string) => {
     if (confirm(`Bạn có chắc muốn xóa vĩnh viễn địa điểm "${placeName}"?`)) {
       store.deletePlace(placeId);
       loadData();
       showToast('Đã xóa địa điểm thành công', 'success');
+      try {
+        await fetch(`/api/places?id=${placeId}`, { method: 'DELETE' });
+      } catch (e) {}
     }
   };
 
@@ -94,14 +104,14 @@ export default function AdminPlacesPage() {
     setEditDescription(place.description || '');
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editModalPlace || !editName.trim() || !editAddress.trim()) {
       showToast('Vui lòng nhập đầy đủ tên và địa chỉ', 'error');
       return;
     }
 
-    store.updatePlace(editModalPlace.id, {
+    const editPayload = {
       name: editName.trim(),
       category_id: editCatId,
       address: editAddress.trim(),
@@ -109,11 +119,21 @@ export default function AdminPlacesPage() {
       lng: editLng,
       price_level: editPrice,
       description: editDescription.trim(),
-    });
+    };
 
+    store.updatePlace(editModalPlace.id, editPayload);
+    const targetId = editModalPlace.id;
     loadData();
     setEditModalPlace(null);
     showToast(`Đã lưu thay đổi cho địa điểm "${editName}"!`, 'success');
+
+    try {
+      await fetch('/api/places', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placeId: targetId, ...editPayload }),
+      });
+    } catch (e) {}
   };
 
   // Image Control: Client side compression + add image
@@ -144,6 +164,14 @@ export default function AdminPlacesPage() {
         setImageModalPlace(updated || null);
         setUploading(false);
         showToast('Tải ảnh và nén ảnh thành công!', 'success');
+
+        if (updated) {
+          fetch('/api/places', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ placeId: imageModalPlace.id, images: updated.images }),
+          }).catch(() => {});
+        }
       };
       img.src = event.target?.result as string;
     };
@@ -160,6 +188,14 @@ export default function AdminPlacesPage() {
     const updated = store.getPlaceById(imageModalPlace.id);
     setImageModalPlace(updated || null);
     showToast('Đã thêm ảnh vào danh sách', 'success');
+
+    if (updated) {
+      fetch('/api/places', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placeId: imageModalPlace.id, images: updated.images }),
+      }).catch(() => {});
+    }
   };
 
   const handleSetFeatured = (index: number) => {
@@ -169,6 +205,14 @@ export default function AdminPlacesPage() {
     const updated = store.getPlaceById(imageModalPlace.id);
     setImageModalPlace(updated || null);
     showToast('Đã đặt làm ảnh đại diện chính!', 'success');
+
+    if (updated) {
+      fetch('/api/places', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placeId: imageModalPlace.id, images: updated.images }),
+      }).catch(() => {});
+    }
   };
 
   const handleRemoveImage = (index: number) => {
@@ -178,19 +222,27 @@ export default function AdminPlacesPage() {
       loadData();
       const updated = store.getPlaceById(imageModalPlace.id);
       setImageModalPlace(updated || null);
-      showToast('Đã xóa ảnh', 'info');
+      showToast('Đã xóa ảnh khỏi địa điểm', 'info');
+
+      if (updated) {
+        fetch('/api/places', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ placeId: imageModalPlace.id, images: updated.images }),
+        }).catch(() => {});
+      }
     }
   };
 
   // Create new place directly (approved)
-  const handleCreatePlace = (e: React.FormEvent) => {
+  const handleCreatePlace = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newAddress.trim()) {
       showToast('Vui lòng điền tên và địa chỉ', 'error');
       return;
     }
 
-    const created = store.proposePlace({
+    const payload = {
       name: newName.trim(),
       category_id: newCatId,
       address: newAddress.trim(),
@@ -199,15 +251,38 @@ export default function AdminPlacesPage() {
       price_level: newPrice,
       description: newDescription.trim(),
       images: newInitialImage.trim() ? [newInitialImage.trim()] : undefined,
-    });
+    };
 
-    // Directly approve
-    store.updatePlaceStatus(created.id, 'approved');
+    let targetId: string | null = null;
+    try {
+      const res = await fetch('/api/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success && data.place) {
+        targetId = data.place.id;
+        // Approve directly
+        await fetch('/api/places', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ placeId: targetId, status: 'approved' }),
+        });
+      }
+    } catch (err) {}
+
+    if (!targetId) {
+      const created = store.proposePlace(payload);
+      targetId = created.id;
+    }
+
+    store.updatePlaceStatus(targetId, 'approved');
     loadData();
     setIsAddPlaceOpen(false);
     setNewName('');
     setNewAddress('');
-    showToast(`Đã tạo địa điểm "${created.name}" với trạng thái Hoạt động!`, 'success');
+    showToast(`Đã tạo địa điểm "${payload.name}" với trạng thái Hoạt động!`, 'success');
   };
 
   const filtered = places.filter((p) => {

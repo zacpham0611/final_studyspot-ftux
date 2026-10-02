@@ -23,12 +23,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Thiếu placeId hoặc hourlyData' }, { status: 400 });
     }
 
-    // 1. Update in local store
-    store.setHourlyCrowdData(placeId, hourlyData);
-
-    // 2. Batch persist to Supabase Database (public.checkins) in a single DB operation
+    // 1. Resolve placeId to a valid Supabase public.places UUID
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(placeId);
+
+    let resolvedPlaceId: string | null = null;
+    let localPlace = store.getPlaceById(placeId) || store.getAllPlacesAdmin().find((p) => p.id === placeId);
 
     if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
       try {
@@ -36,24 +37,111 @@ export async function POST(request: NextRequest) {
           auth: { persistSession: false },
         });
 
-        // Batch delete existing checkins for this place
-        await supabaseAdmin.from('checkins').delete().eq('place_id', placeId);
+        // Step 1: If placeId is already a UUID format, verify existence in public.places
+        if (isUuid) {
+          const { data: directPlace } = await supabaseAdmin
+            .from('places')
+            .select('id')
+            .eq('id', placeId)
+            .maybeSingle();
 
-        // Prepare batch rows for all hours (07:00 to 22:00)
+          if (directPlace?.id) {
+            resolvedPlaceId = directPlace.id;
+          }
+        }
+
+        // Step 2: If not resolved yet (e.g. local ID 'p-1790781746296' or 'p-1'), resolve via place metadata
+        if (!resolvedPlaceId) {
+          if (localPlace) {
+            // Attempt A: Match by exact name and address
+            const { data: exactMatch } = await supabaseAdmin
+              .from('places')
+              .select('id')
+              .eq('name', localPlace.name.trim())
+              .eq('address', localPlace.address.trim())
+              .limit(1);
+
+            if (exactMatch && exactMatch.length > 0) {
+              resolvedPlaceId = exactMatch[0].id;
+            }
+
+            // Attempt B: Match by case-insensitive name
+            if (!resolvedPlaceId) {
+              const { data: nameMatch } = await supabaseAdmin
+                .from('places')
+                .select('id')
+                .ilike('name', localPlace.name.trim())
+                .limit(1);
+
+              if (nameMatch && nameMatch.length > 0) {
+                resolvedPlaceId = nameMatch[0].id;
+              }
+            }
+
+            // Attempt C: Match by coordinates
+            if (!resolvedPlaceId && localPlace.lat && localPlace.lng) {
+              const { data: coordMatch } = await supabaseAdmin
+                .from('places')
+                .select('id, lat, lng')
+                .gte('lat', localPlace.lat - 0.0005)
+                .lte('lat', localPlace.lat + 0.0005)
+                .gte('lng', localPlace.lng - 0.0005)
+                .lte('lng', localPlace.lng + 0.0005)
+                .limit(1);
+
+              if (coordMatch && coordMatch.length > 0) {
+                resolvedPlaceId = coordMatch[0].id;
+              }
+            }
+          }
+        }
+
+        // Step 3: If place does NOT exist in Supabase, report clear error and do not insert
+        if (!resolvedPlaceId) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Địa điểm "${localPlace?.name || placeId}" không tồn tại trong cơ sở dữ liệu Supabase. Vui lòng đảm bảo địa điểm đã được đồng bộ lên Supabase trước khi thiết lập độ đông.`
+            },
+            { status: 404 }
+          );
+        }
+
+        // Step 4: Find a valid admin user_id in public.users to satisfy foreign key constraint
+        let adminUserId = 'a0000000-0000-0000-0000-000000000001';
+        try {
+          const { data: adminUserRow } = await supabaseAdmin
+            .from('users')
+            .select('id')
+            .or(`email.eq.${ADMIN_EMAIL},role.eq.admin`)
+            .limit(1)
+            .maybeSingle();
+
+          if (adminUserRow?.id) {
+            adminUserId = adminUserRow.id;
+          }
+        } catch (uErr) {
+          console.warn('Admin user lookup notice:', uErr);
+        }
+
+        // Step 5: Batch delete existing checkins for this place using real UUID
+        await supabaseAdmin.from('checkins').delete().eq('place_id', resolvedPlaceId);
+
+        // Step 6: Prepare batch rows for all hours using real UUID
         const today = new Date();
         const rows = hourlyData.map((item: { hour: number; level: number }) => {
           const d = new Date(today);
           d.setHours(item.hour, 0, 0, 0);
           return {
-            place_id: placeId,
-            user_id: 'a0000000-0000-0000-0000-000000000001',
+            place_id: resolvedPlaceId,
+            user_id: adminUserId,
             level: item.level,
             note: 'Admin thiết lập độ đông',
             created_at: d.toISOString(),
           };
         });
 
-        // Single batch insert of all 16 rows at once
+        // Step 7: Single batch insert of all rows at once
         const { error: insErr } = await supabaseAdmin.from('checkins').insert(rows);
         if (insErr) {
           console.error('Supabase checkins batch insert error:', insErr.message);
@@ -64,11 +152,30 @@ export async function POST(request: NextRequest) {
         }
       } catch (err: any) {
         console.error('Supabase checkins update exception:', err.message);
+        if (err.message?.includes('fetch failed') || err.message?.includes('ENOTFOUND')) {
+          store.setHourlyCrowdData(placeId, hourlyData);
+          return NextResponse.json({ success: true, placeId, count: hourlyData.length, offline: true });
+        }
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
       }
     }
 
-    return NextResponse.json({ success: true, placeId, count: hourlyData.length });
+    // Step 8: Update in local store (for both original ID and resolved UUID)
+    store.setHourlyCrowdData(placeId, hourlyData);
+    if (resolvedPlaceId && resolvedPlaceId !== placeId) {
+      store.setHourlyCrowdData(resolvedPlaceId, hourlyData);
+      if (localPlace) {
+        localPlace.id = resolvedPlaceId;
+        store.savePlace(localPlace);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      placeId: resolvedPlaceId || placeId,
+      originalPlaceId: placeId,
+      count: hourlyData.length
+    });
   } catch (e: any) {
     return NextResponse.json({ success: false, error: e.message }, { status: 500 });
   }

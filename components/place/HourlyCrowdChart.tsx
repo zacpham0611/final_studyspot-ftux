@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { CrowdStatus } from '@/lib/types/database';
 import { Clock, Info, Edit3, Check, X, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/common/Toast';
+import { store } from '@/lib/data/store';
 
 interface HourlyData {
   hour: number;
@@ -127,6 +128,15 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
       const resData = await res.json();
       if (!res.ok || !resData.success) {
         throw new Error(resData.error || 'Lỗi cập nhật dữ liệu độ đông');
+      }
+
+      // If placeId was resolved to real Supabase UUID, sync local place in store
+      if (resData.placeId && resData.placeId !== placeId) {
+        const localPlace = store.getPlaceById(placeId);
+        if (localPlace) {
+          localPlace.id = resData.placeId;
+          store.savePlace(localPlace);
+        }
       }
 
       // Success: maintain optimistic state, close modal, notify user

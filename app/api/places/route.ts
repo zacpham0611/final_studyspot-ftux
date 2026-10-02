@@ -57,6 +57,11 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ places, count: places.length });
 }
 
+const isUuid = (str?: string | null): boolean => {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+};
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -84,6 +89,7 @@ export async function POST(request: NextRequest) {
     let createdId: string | null = null;
     let createdLat = Number(lat);
     let createdLng = Number(lng);
+    const validCreatedBy = isUuid(created_by) ? created_by : null;
 
     // 1. Persist directly to Supabase public.places
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -108,7 +114,7 @@ export async function POST(request: NextRequest) {
             price_level: price_level || 2,
             images: images || [],
             status: 'pending',
-            created_by: created_by || null,
+            created_by: validCreatedBy,
           })
           .select('id, name, address, lat, lng')
           .single();
@@ -117,6 +123,19 @@ export async function POST(request: NextRequest) {
           createdId = inserted.id;
           createdLat = Number(inserted.lat);
           createdLng = Number(inserted.lng);
+
+          // Save place_amenities if provided
+          if (amenities && Array.isArray(amenities) && amenities.length > 0) {
+            const rows = amenities.map((a: any) => ({
+              place_id: createdId,
+              amenity_id: typeof a === 'object' ? a.id : Number(a),
+            })).filter((r: any) => !isNaN(r.amenity_id));
+            if (rows.length > 0) {
+              try {
+                await supabaseAdmin.from('place_amenities').insert(rows);
+              } catch (paErr) {}
+            }
+          }
         } else if (insertErr) {
           console.warn('Supabase places table insert notice:', insertErr.message);
         }
@@ -131,6 +150,7 @@ export async function POST(request: NextRequest) {
       id: createdId || undefined,
       lat: createdLat,
       lng: createdLng,
+      created_by: validCreatedBy,
     });
 
     const finalId = createdId || newPlace.id;
@@ -158,29 +178,52 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { placeId, status, rejectReason } = body;
+    const { 
+      placeId, 
+      status, 
+      rejectReason,
+      name,
+      category_id,
+      address,
+      lat,
+      lng,
+      description,
+      price_level,
+      images,
+      opening_hours
+    } = body;
 
-    if (!placeId || !status) {
+    if (!placeId) {
       return NextResponse.json(
-        { success: false, error: 'Thiếu placeId hoặc status' },
-        { status: 400 }
-      );
-    }
-
-    if (!['pending', 'approved', 'rejected', 'hidden'].includes(status)) {
-      return NextResponse.json(
-        { success: false, error: 'Trạng thái không hợp lệ' },
+        { success: false, error: 'Thiếu placeId' },
         { status: 400 }
       );
     }
 
     // 1. Update in-memory store
-    if (status === 'approved') {
-      store.approveProposal(placeId);
-    } else if (status === 'rejected') {
-      store.rejectProposal(placeId, rejectReason || 'Không đáp ứng tiêu chuẩn.');
-    } else {
-      store.updatePlaceStatus(placeId, status, rejectReason);
+    if (status) {
+      if (status === 'approved') {
+        store.approveProposal(placeId);
+      } else if (status === 'rejected') {
+        store.rejectProposal(placeId, rejectReason || 'Không đáp ứng tiêu chuẩn.');
+      } else {
+        store.updatePlaceStatus(placeId, status, rejectReason);
+      }
+    }
+
+    const editFields: any = {};
+    if (name !== undefined) editFields.name = name;
+    if (category_id !== undefined) editFields.category_id = category_id;
+    if (address !== undefined) editFields.address = address;
+    if (lat !== undefined) editFields.lat = Number(lat);
+    if (lng !== undefined) editFields.lng = Number(lng);
+    if (description !== undefined) editFields.description = description;
+    if (price_level !== undefined) editFields.price_level = price_level;
+    if (images !== undefined) editFields.images = images;
+    if (opening_hours !== undefined) editFields.opening_hours = opening_hours;
+
+    if (Object.keys(editFields).length > 0) {
+      store.updatePlace(placeId, editFields);
     }
 
     // 2. Persist directly to Supabase public.places
@@ -193,14 +236,15 @@ export async function PATCH(request: NextRequest) {
           auth: { persistSession: false },
         });
 
-        const updateData: any = {
-          status,
-        };
-        if (status === 'approved') {
-          updateData.approved_at = new Date().toISOString();
-          updateData.reject_reason = null;
-        } else if (status === 'rejected') {
-          updateData.reject_reason = rejectReason || null;
+        const updateData: any = { ...editFields };
+        if (status) {
+          updateData.status = status;
+          if (status === 'approved') {
+            updateData.approved_at = new Date().toISOString();
+            updateData.reject_reason = null;
+          } else if (status === 'rejected') {
+            updateData.reject_reason = rejectReason || null;
+          }
         }
 
         const { data, error } = await supabaseAdmin
@@ -211,19 +255,49 @@ export async function PATCH(request: NextRequest) {
           .single();
 
         if (error) {
-          console.warn('Supabase places status update error:', error.message);
+          console.warn('Supabase places update error:', error.message);
           return NextResponse.json({ success: false, error: error.message }, { status: 500 });
         }
 
         return NextResponse.json({ success: true, place: data });
       } catch (dbErr: any) {
-        console.warn('Supabase places status update network error:', dbErr.message);
+        console.warn('Supabase places update network error:', dbErr.message);
       }
     }
 
     return NextResponse.json({ success: true, placeId, status });
   } catch (e: any) {
     console.error('PATCH /api/places exception:', e.message);
+    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const placeId = searchParams.get('id');
+
+    if (!placeId) {
+      return NextResponse.json({ success: false, error: 'Thiếu placeId' }, { status: 400 });
+    }
+
+    // 1. Delete from store
+    store.deletePlace(placeId);
+
+    // 2. Delete from Supabase public.places
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
+      const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+      const { error } = await supabaseAdmin.from('places').delete().eq('id', placeId);
+      if (error) {
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (e: any) {
     return NextResponse.json({ success: false, error: e.message }, { status: 500 });
   }
 }

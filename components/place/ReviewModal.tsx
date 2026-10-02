@@ -58,9 +58,15 @@ export function ReviewModal({
     setIsSubmitting(true);
 
     try {
-      // 1. Insert directly into Supabase Database (public.reviews table)
+      // Resolve target place_id to UUID if needed
+      let targetPlaceId = placeId;
+      const matched = store.getPlaceById(placeId);
+      if (matched && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(matched.id)) {
+        targetPlaceId = matched.id;
+      }
+
       const reviewPayload = {
-        place_id: placeId,
+        place_id: targetPlaceId,
         user_id: currentUser.id,
         rating,
         wifi_rating: wifiRating,
@@ -73,34 +79,31 @@ export function ReviewModal({
         is_hidden: false,
       };
 
-      const { data: dbReview, error: dbError } = await supabase
-        .from('reviews')
-        .insert(reviewPayload)
-        .select()
-        .single();
-
-      if (dbError) {
-        if (dbError.message.includes('duplicate key') || dbError.message.includes('unique')) {
+      // 1. Submit to API endpoint for direct Supabase persistence
+      try {
+        const apiRes = await fetch('/api/reviews', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reviewPayload),
+        });
+        const apiJson = await apiRes.json();
+        if (!apiRes.ok && apiJson.error && apiJson.error.includes('đã viết đánh giá')) {
           showToast('Bạn đã viết đánh giá cho địa điểm này rồi.', 'error');
           setIsSubmitting(false);
           return;
         }
-        console.warn('Supabase review insert warning:', dbError.message);
+      } catch (apiErr) {
+        console.warn('API review POST notice:', apiErr);
       }
 
-      // 2. Sync with local client store
-      const result = store.addReview({
-        place_id: placeId,
-        user_id: currentUser.id,
-        rating,
-        wifi_rating: wifiRating,
-        outlet_rating: outletRating,
-        quiet_rating: quietRating,
-        price_rating: priceRating,
-        space_rating: spaceRating,
-        content: content.trim(),
-        images: imageUrl.trim() ? [imageUrl.trim()] : [],
-      });
+      // 2. Direct Supabase insert attempt
+      try {
+        await supabase.from('reviews').insert(reviewPayload);
+      } catch (dbErr) {}
+
+      // 3. Sync with local client store
+      store.addReview(reviewPayload);
+      await store.loadFromSupabase();
 
       showToast('Đăng đánh giá thành công lên hệ thống!', 'success');
       onReviewSuccess();

@@ -38,6 +38,9 @@ export default function AdminCategoriesPage() {
 
   useEffect(() => {
     loadData();
+    store.loadFromSupabase().then(loadData);
+    const unsub = store.subscribe(loadData);
+    return () => unsub();
   }, []);
 
   const handleAddCategory = (e: React.FormEvent) => {

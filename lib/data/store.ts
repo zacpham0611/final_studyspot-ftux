@@ -27,6 +27,11 @@ import { getOpeningStatus } from '@/lib/utils/hours';
 import { matchesSearch } from '@/lib/utils/text';
 import { supabase } from '@/lib/supabase/client';
 
+export const isUuid = (str?: string | null): boolean => {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+};
+
 class StudySpotStore {
   private places: Place[] = [...INITIAL_PLACES];
   private categories: Category[] = [...INITIAL_CATEGORIES];
@@ -184,11 +189,16 @@ class StudySpotStore {
     email: string,
     pass: string,
     fullName: string,
-    role: string = 'student'
+    role: string = 'student',
+    id?: string
   ): { success: boolean; user?: UserProfile; message?: string } {
     const cleanEmail = email.trim().toLowerCase();
     const existing = this.users.find((u) => u.email.toLowerCase() === cleanEmail);
     if (existing) {
+      if (id && existing.id !== id) {
+        existing.id = id;
+        this.persist();
+      }
       return {
         success: false,
         message: 'Email này đã tồn tại trong hệ thống. Vui lòng đăng nhập!',
@@ -196,7 +206,7 @@ class StudySpotStore {
     }
 
     const newUser: UserProfile = {
-      id: `user-${Date.now()}`,
+      id: id || `user-${Date.now()}`,
       full_name: fullName.trim(),
       email: cleanEmail,
       role: role === 'admin' ? 'admin' : 'student',
@@ -226,12 +236,29 @@ class StudySpotStore {
   async loadFromSupabase() {
     if (typeof window === 'undefined') return;
     try {
-      // Parallelize queries across all 4 tables in a single roundtrip batch
-      const [usersRes, placesRes, reviewsRes, checkinsRes] = await Promise.all([
+      // Parallelize queries across all 10 persistent tables in a single batch
+      const [
+        usersRes,
+        placesRes,
+        reviewsRes,
+        checkinsRes,
+        favoritesRes,
+        notificationsRes,
+        categoriesRes,
+        amenitiesRes,
+        reportsRes,
+        helpfulRes,
+      ] = await Promise.all([
         supabase.from('users').select('*').order('created_at', { ascending: false }),
-        supabase.from('places').select('*'),
+        supabase.from('places').select('*, place_amenities(amenity_id, amenities(*))'),
         supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
         supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
+        supabase.from('favorites').select('*'),
+        supabase.from('notifications').select('*').order('created_at', { ascending: false }),
+        supabase.from('categories').select('*').order('id', { ascending: true }),
+        supabase.from('amenities').select('*').order('id', { ascending: true }),
+        supabase.from('review_reports').select('*, review:reviews(*), user:users(*)').order('created_at', { ascending: false }),
+        supabase.from('review_helpful').select('*'),
       ]);
 
       if (usersRes.data && usersRes.data.length > 0) {
@@ -245,6 +272,7 @@ class StudySpotStore {
           price_level: dp.price_level || 2,
           images: dp.images || [],
           view_count: dp.view_count || 0,
+          amenities: dp.place_amenities?.map((pa: any) => pa.amenities).filter(Boolean) || dp.amenities || [],
         }));
       }
 
@@ -254,6 +282,36 @@ class StudySpotStore {
 
       if (checkinsRes.data && checkinsRes.data.length > 0) {
         this.checkins = checkinsRes.data;
+      }
+
+      if (favoritesRes.data) {
+        this.favorites = {};
+        for (const f of favoritesRes.data) {
+          if (!this.favorites[f.user_id]) {
+            this.favorites[f.user_id] = new Set();
+          }
+          this.favorites[f.user_id].add(f.place_id);
+        }
+      }
+
+      if (notificationsRes.data) {
+        this.notifications = notificationsRes.data;
+      }
+
+      if (categoriesRes.data && categoriesRes.data.length > 0) {
+        this.categories = categoriesRes.data;
+      }
+
+      if (amenitiesRes.data && amenitiesRes.data.length > 0) {
+        this.amenities = amenitiesRes.data;
+      }
+
+      if (reportsRes.data) {
+        this.reviewReports = reportsRes.data;
+      }
+
+      if (helpfulRes.data) {
+        this.helpfulVotes = new Set(helpfulRes.data.map((h: any) => `${h.review_id}_${h.user_id}`));
       }
 
       this.persist();
@@ -392,6 +450,10 @@ class StudySpotStore {
       p.images = p.images || [];
       p.images.push(imageUrl);
       this.persist();
+      this.notify();
+      if (typeof window !== 'undefined' && isUuid(placeId)) {
+        supabase.from('places').update({ images: p.images }).eq('id', placeId).then();
+      }
       return true;
     }
     return false;
@@ -404,6 +466,10 @@ class StudySpotStore {
       p.images.splice(imageIndex, 1);
       p.images.unshift(selected);
       this.persist();
+      this.notify();
+      if (typeof window !== 'undefined' && isUuid(placeId)) {
+        supabase.from('places').update({ images: p.images }).eq('id', placeId).then();
+      }
       return true;
     }
     return false;
@@ -414,6 +480,10 @@ class StudySpotStore {
     if (p && p.images && imageIndex >= 0 && imageIndex < p.images.length) {
       p.images.splice(imageIndex, 1);
       this.persist();
+      this.notify();
+      if (typeof window !== 'undefined' && isUuid(placeId)) {
+        supabase.from('places').update({ images: p.images }).eq('id', placeId).then();
+      }
       return true;
     }
     return false;
@@ -424,6 +494,26 @@ class StudySpotStore {
     if (!p) return null;
     Object.assign(p, data);
     this.persist();
+    this.notify();
+
+    if (typeof window !== 'undefined' && isUuid(placeId)) {
+      const updatePayload: any = {};
+      if (data.name !== undefined) updatePayload.name = data.name;
+      if (data.category_id !== undefined) updatePayload.category_id = data.category_id;
+      if (data.address !== undefined) updatePayload.address = data.address;
+      if (data.lat !== undefined) updatePayload.lat = data.lat;
+      if (data.lng !== undefined) updatePayload.lng = data.lng;
+      if (data.description !== undefined) updatePayload.description = data.description;
+      if (data.price_level !== undefined) updatePayload.price_level = data.price_level;
+      if (data.images !== undefined) updatePayload.images = data.images;
+      if (data.status !== undefined) updatePayload.status = data.status;
+      if (data.reject_reason !== undefined) updatePayload.reject_reason = data.reject_reason;
+      if (data.opening_hours !== undefined) updatePayload.opening_hours = data.opening_hours;
+
+      supabase.from('places').update(updatePayload).eq('id', placeId).then(({ error }) => {
+        if (error) console.warn('Supabase updatePlace notice:', error.message);
+      });
+    }
     return p;
   }
 
@@ -472,20 +562,32 @@ class StudySpotStore {
 
     this.checkins.unshift(newCheckin);
     this.persist();
+    this.notify();
 
     // Persist directly to Supabase Database
     try {
-      supabase.from('checkins').insert({
-        place_id: placeId,
-        user_id: userId,
-        level,
-        note: note ? note.slice(0, 100) : null,
-      }).select().single().then(({ data }) => {
-        if (data?.id) {
-          newCheckin.id = data.id;
-          this.persist();
-        }
-      });
+      let targetPlaceId = placeId;
+      if (!isUuid(targetPlaceId)) {
+        const p = this.places.find((x) => x.id === placeId);
+        if (p && isUuid(p.id)) targetPlaceId = p.id;
+      }
+
+      if (isUuid(targetPlaceId) && isUuid(userId)) {
+        supabase.from('checkins').insert({
+          place_id: targetPlaceId,
+          user_id: userId,
+          level,
+          note: note ? note.slice(0, 100) : null,
+        }).select().single().then(({ data, error }) => {
+          if (data?.id) {
+            newCheckin.id = data.id;
+            this.persist();
+          }
+          if (error) {
+            console.warn('Supabase checkin insert notice:', error.message);
+          }
+        });
+      }
     } catch (e) {
       console.warn('Supabase checkin insert notice:', e);
     }
@@ -715,12 +817,19 @@ class StudySpotStore {
       this.helpfulVotes.delete(key);
       rev.helpful_count = Math.max(0, rev.helpful_count - 1);
       isNowHelpful = false;
+      if (typeof window !== 'undefined' && isUuid(reviewId) && isUuid(userId)) {
+        supabase.from('review_helpful').delete().match({ review_id: reviewId, user_id: userId }).then();
+      }
     } else {
       this.helpfulVotes.add(key);
       rev.helpful_count += 1;
       isNowHelpful = true;
+      if (typeof window !== 'undefined' && isUuid(reviewId) && isUuid(userId)) {
+        supabase.from('review_helpful').upsert({ review_id: reviewId, user_id: userId }).then();
+      }
     }
     this.persist();
+    this.notify();
     return { helpful: isNowHelpful, count: rev.helpful_count };
   }
 
@@ -742,6 +851,23 @@ class StudySpotStore {
 
     this.reviewReports.unshift(newReport);
     this.persist();
+    this.notify();
+
+    if (typeof window !== 'undefined' && isUuid(reviewId) && isUuid(userId)) {
+      supabase.from('review_reports').insert({
+        review_id: reviewId,
+        user_id: userId,
+        reason,
+        status: 'pending',
+      }).select().single().then(({ data, error }) => {
+        if (data?.id) {
+          newReport.id = data.id;
+          this.persist();
+        }
+        if (error) console.warn('Supabase review report notice:', error.message);
+      });
+    }
+
     return { success: true, message: 'Báo cáo vi phạm đã được gửi tới Ban Quản Trị FTU.' };
   }
 
@@ -758,6 +884,10 @@ class StudySpotStore {
     if (rep) {
       rep.status = 'dismissed';
       this.persist();
+      this.notify();
+      if (typeof window !== 'undefined' && isUuid(reportId)) {
+        supabase.from('review_reports').update({ status: 'dismissed' }).eq('id', reportId).then();
+      }
       return true;
     }
     return false;
@@ -781,6 +911,10 @@ class StudySpotStore {
       if (n.user_id === uid) n.is_read = true;
     }
     this.persist();
+    this.notify();
+    if (typeof window !== 'undefined' && isUuid(uid)) {
+      supabase.from('notifications').update({ is_read: true }).eq('user_id', uid).then();
+    }
   }
 
   markNotificationRead(notificationId: string): void {
@@ -788,6 +922,10 @@ class StudySpotStore {
     if (notif) {
       notif.is_read = true;
       this.persist();
+      this.notify();
+      if (typeof window !== 'undefined' && isUuid(notificationId)) {
+        supabase.from('notifications').update({ is_read: true }).eq('id', notificationId).then();
+      }
     }
   }
 
@@ -802,6 +940,24 @@ class StudySpotStore {
     };
     this.notifications.unshift(newNotif);
     this.persist();
+    this.notify();
+
+    // Persist to Supabase public.notifications
+    if (typeof window !== 'undefined' && isUuid(userId)) {
+      supabase.from('notifications').insert({
+        user_id: userId,
+        noi_dung,
+        link: link || null,
+        is_read: false,
+      }).select().single().then(({ data, error }) => {
+        if (data?.id) {
+          newNotif.id = data.id;
+          this.persist();
+        }
+        if (error) console.warn('Supabase notification notice:', error.message);
+      });
+    }
+
     return newNotif;
   }
 
@@ -826,6 +982,21 @@ class StudySpotStore {
       isNowFav = true;
     }
     this.persist();
+    this.notify();
+
+    // Persist to Supabase public.favorites
+    if (typeof window !== 'undefined' && isUuid(userId) && isUuid(placeId)) {
+      if (isNowFav) {
+        supabase.from('favorites').upsert({ user_id: userId, place_id: placeId }).then(({ error }) => {
+          if (error) console.warn('Supabase add favorite notice:', error.message);
+        });
+      } else {
+        supabase.from('favorites').delete().match({ user_id: userId, place_id: placeId }).then(({ error }) => {
+          if (error) console.warn('Supabase remove favorite notice:', error.message);
+        });
+      }
+    }
+
     return isNowFav;
   }
 
@@ -840,7 +1011,7 @@ class StudySpotStore {
   proposePlace(placeData: Partial<Place>, userOverride?: UserProfile): Place {
     const user = userOverride || this.currentUser;
     const newPlace: Place = {
-      id: `p-${Date.now()}`,
+      id: placeData.id || `p-${Date.now()}`,
       name: placeData.name || 'Địa điểm mới',
       category_id: placeData.category_id || 1,
       address: placeData.address || 'Gần ĐH Ngoại thương',
@@ -1002,6 +1173,9 @@ class StudySpotStore {
       u.is_locked = isLocked;
       this.persist();
       this.notify();
+      if (typeof window !== 'undefined' && isUuid(userId)) {
+        supabase.from('users').update({ is_locked: isLocked }).eq('id', userId).then();
+      }
       return true;
     }
     return false;
@@ -1013,6 +1187,9 @@ class StudySpotStore {
       u.is_locked = explicitStatus !== undefined ? explicitStatus : !u.is_locked;
       this.persist();
       this.notify();
+      if (typeof window !== 'undefined' && isUuid(userId)) {
+        supabase.from('users').update({ is_locked: u.is_locked }).eq('id', userId).then();
+      }
       return true;
     }
     return false;
@@ -1035,6 +1212,9 @@ class StudySpotStore {
     }
     this.persist();
     this.notify();
+    if (typeof window !== 'undefined' && isUuid(userId)) {
+      supabase.from('users').update({ avatar_url: avatarUrl }).eq('id', userId).then();
+    }
   }
 
   getAllReviewsAdmin(): Review[] {
@@ -1049,6 +1229,7 @@ class StudySpotStore {
     if (r) {
       r.is_hidden = !r.is_hidden;
       this.persist();
+      this.notify();
       try {
         supabase.from('reviews').update({ is_hidden: r.is_hidden }).eq('id', reviewId).then();
       } catch (e) {}
@@ -1065,15 +1246,35 @@ class StudySpotStore {
     const idx = this.categories.findIndex((c) => c.id === cat.id);
     if (idx !== -1) {
       this.categories[idx] = cat;
+      if (typeof window !== 'undefined') {
+        supabase.from('categories').update({ name: cat.name, icon: cat.icon }).eq('id', cat.id).then();
+      }
     } else {
-      this.categories.push({ ...cat, id: Date.now() });
+      const tempId = typeof cat.id === 'number' && cat.id < 1000000000 ? cat.id : undefined;
+      if (typeof window !== 'undefined') {
+        const payload: any = { name: cat.name, icon: cat.icon };
+        if (tempId) payload.id = tempId;
+        supabase.from('categories').insert(payload).select().single().then(({ data }) => {
+          if (data) {
+            this.categories = this.categories.map((c) => (c.name === cat.name ? data : c));
+            this.persist();
+            this.notify();
+          }
+        });
+      }
+      this.categories.push({ ...cat, id: tempId || Date.now() });
     }
     this.persist();
+    this.notify();
   }
 
   deleteCategory(catId: number) {
     this.categories = this.categories.filter((c) => c.id !== catId);
     this.persist();
+    this.notify();
+    if (typeof window !== 'undefined') {
+      supabase.from('categories').delete().eq('id', catId).then();
+    }
   }
 
   getAmenities(): Amenity[] {
@@ -1084,15 +1285,35 @@ class StudySpotStore {
     const idx = this.amenities.findIndex((a) => a.id === am.id);
     if (idx !== -1) {
       this.amenities[idx] = am;
+      if (typeof window !== 'undefined') {
+        supabase.from('amenities').update({ name: am.name, icon: am.icon }).eq('id', am.id).then();
+      }
     } else {
-      this.amenities.push({ ...am, id: Date.now() });
+      const tempId = typeof am.id === 'number' && am.id < 1000000000 ? am.id : undefined;
+      if (typeof window !== 'undefined') {
+        const payload: any = { name: am.name, icon: am.icon };
+        if (tempId) payload.id = tempId;
+        supabase.from('amenities').insert(payload).select().single().then(({ data }) => {
+          if (data) {
+            this.amenities = this.amenities.map((a) => (a.name === am.name ? data : a));
+            this.persist();
+            this.notify();
+          }
+        });
+      }
+      this.amenities.push({ ...am, id: tempId || Date.now() });
     }
     this.persist();
+    this.notify();
   }
 
   deleteAmenity(amId: number) {
     this.amenities = this.amenities.filter((a) => a.id !== amId);
     this.persist();
+    this.notify();
+    if (typeof window !== 'undefined') {
+      supabase.from('amenities').delete().eq('id', amId).then();
+    }
   }
 
   getAdminStats() {
