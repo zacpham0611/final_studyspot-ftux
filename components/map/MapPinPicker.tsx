@@ -69,14 +69,16 @@ function MapViewController({ lat, lng }: { lat: number; lng: number }) {
 
   useEffect(() => {
     map.invalidateSize();
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-    }, 200);
-    return () => clearTimeout(timer);
+    const t1 = setTimeout(() => map.invalidateSize(), 100);
+    const t2 = setTimeout(() => map.invalidateSize(), 300);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [map]);
 
   useEffect(() => {
-    if (lat && lng) {
+    if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
       map.flyTo([lat, lng], 17, { animate: true, duration: 0.8 });
     }
   }, [lat, lng, map]);
@@ -89,19 +91,23 @@ export default function MapPinPicker({
   onChange, 
   height = '280px' 
 }: MapPinPickerProps) {
+  const safeLat = typeof lat === 'number' && !isNaN(lat) ? lat : FTU_COORDINATES.lat;
+  const safeLng = typeof lng === 'number' && !isNaN(lng) ? lng : FTU_COORDINATES.lng;
+
   return (
     <div 
       className="w-full relative rounded-xl overflow-hidden border border-border shadow-inner" 
       style={{ height, minHeight: '260px' }}
     >
       <MapContainer
-        center={[lat || FTU_COORDINATES.lat, lng || FTU_COORDINATES.lng]}
+        center={[safeLat, safeLng]}
         zoom={16}
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          subdomains="abc"
           maxZoom={19}
         />
         <MapViewController lat={lat} lng={lng} />

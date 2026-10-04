@@ -25,9 +25,9 @@ function MapResizeHandler() {
 
   useEffect(() => {
     map.invalidateSize();
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-    }, 200);
+    const t1 = setTimeout(() => map.invalidateSize(), 100);
+    const t2 = setTimeout(() => map.invalidateSize(), 300);
+    const t3 = setTimeout(() => map.invalidateSize(), 600);
 
     const handleResize = () => {
       map.invalidateSize();
@@ -35,7 +35,9 @@ function MapResizeHandler() {
     window.addEventListener('resize', handleResize);
 
     return () => {
-      clearTimeout(timer);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
       window.removeEventListener('resize', handleResize);
     };
   }, [map]);
@@ -62,7 +64,7 @@ function MapFlyController({
       isFirstRender.current = false;
       prevPlaceId.current = selectedPlace?.id;
       // On initial mount, map is already centered at FTU unless place or coords requested
-      if (selectedPlace) {
+      if (selectedPlace && typeof selectedPlace.lat === 'number' && !isNaN(selectedPlace.lat)) {
         map.flyTo([selectedPlace.lat, selectedPlace.lng], 16, {
           animate: true,
           duration: 1.0,
@@ -71,7 +73,7 @@ function MapFlyController({
         if (targetMarker) {
           targetMarker.openPopup();
         }
-      } else if (targetCoords) {
+      } else if (targetCoords && typeof targetCoords.lat === 'number' && !isNaN(targetCoords.lat)) {
         map.flyTo([targetCoords.lat, targetCoords.lng], 16, {
           animate: true,
           duration: 1.0,
@@ -80,7 +82,7 @@ function MapFlyController({
       return;
     }
 
-    if (selectedPlace) {
+    if (selectedPlace && typeof selectedPlace.lat === 'number' && !isNaN(selectedPlace.lat)) {
       prevPlaceId.current = selectedPlace.id;
       map.flyTo([selectedPlace.lat, selectedPlace.lng], 16, {
         animate: true,
@@ -91,7 +93,7 @@ function MapFlyController({
       if (targetMarker) {
         targetMarker.openPopup();
       }
-    } else if (targetCoords) {
+    } else if (targetCoords && typeof targetCoords.lat === 'number' && !isNaN(targetCoords.lat)) {
       map.flyTo([targetCoords.lat, targetCoords.lng], 16, {
         animate: true,
         duration: 1.0,
@@ -110,18 +112,30 @@ function MapFlyController({
 }
 
 export default function MapContainer({
-  places,
+  places = [],
   selectedPlaceId,
   targetCoords,
   onSelectPlace,
+  height = '100%',
+  minHeight = '100%',
 }: MapContainerProps) {
-  const selectedPlace = places.find((p) => p.id === selectedPlaceId);
+  const safePlaces = Array.isArray(places) ? places : [];
+  const selectedPlace = safePlaces.find((p) => p && p.id === selectedPlaceId);
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
 
+  const validTargetCoords =
+    targetCoords &&
+    typeof targetCoords.lat === 'number' &&
+    typeof targetCoords.lng === 'number' &&
+    !isNaN(targetCoords.lat) &&
+    !isNaN(targetCoords.lng)
+      ? targetCoords
+      : null;
+
   return (
-    <div style={{ height: '100%', width: '100%' }} className="relative w-full h-full">
+    <div style={{ height, minHeight, width: '100%' }} className="relative w-full h-full">
       <LeafletMap
-        center={targetCoords ? [targetCoords.lat, targetCoords.lng] : [FTU_COORDINATES.lat, FTU_COORDINATES.lng]}
+        center={validTargetCoords ? [validTargetCoords.lat, validTargetCoords.lng] : [FTU_COORDINATES.lat, FTU_COORDINATES.lng]}
         zoom={16}
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
@@ -130,11 +144,12 @@ export default function MapContainer({
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          subdomains="abc"
           maxZoom={19}
         />
 
         <MapResizeHandler />
-        <MapFlyController selectedPlace={selectedPlace} targetCoords={targetCoords} markerRefs={markerRefs} />
+        <MapFlyController selectedPlace={selectedPlace} targetCoords={validTargetCoords} markerRefs={markerRefs} />
 
         {/* Foreign Trade University Central Marker - Burgundy #8A1538 */}
         <Marker
@@ -153,7 +168,10 @@ export default function MapContainer({
         </Marker>
 
         {/* Place Markers with crowd-colored droplet icons */}
-        {places.map((place) => {
+        {safePlaces.map((place) => {
+          if (!place || typeof place.lat !== 'number' || typeof place.lng !== 'number' || isNaN(place.lat) || isNaN(place.lng)) {
+            return null;
+          }
           const isSelected = place.id === selectedPlaceId;
           const markerIcon = createPlaceMarkerIcon(
             place.crowd_status,

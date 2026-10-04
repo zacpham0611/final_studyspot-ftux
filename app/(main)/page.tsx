@@ -355,11 +355,11 @@ function HomePageContent() {
       </aside>
 
       {/* RIGHT SIDE: LEAFLET OPENSTREETMAP MAP */}
-      <div className="w-full h-[calc(100vh-80px)] sticky top-[70px] rounded-2xl overflow-hidden border border-gray-200 bg-gray-100 shadow-inner flex-1 relative">
+      <div className="w-full h-[calc(100vh-80px)] min-h-[450px] sticky top-[70px] rounded-2xl overflow-hidden border border-gray-200 bg-gray-100 shadow-inner flex-1 relative">
         <StudyMap
           places={places}
           selectedPlaceId={selectedPlaceId}
-          targetCoords={paramLat && paramLng ? { lat: paramLat, lng: paramLng } : null}
+          targetCoords={paramLat && paramLng && !isNaN(paramLat) && !isNaN(paramLng) ? { lat: paramLat, lng: paramLng } : null}
           onSelectPlace={handleSelectFromMap}
         />
 
