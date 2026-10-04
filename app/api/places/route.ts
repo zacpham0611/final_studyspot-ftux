@@ -3,13 +3,15 @@ import { store } from '@/lib/data/store';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get('q') || undefined;
   const categoryId = searchParams.get('category') ? Number(searchParams.get('category')) : undefined;
+  const includeAll = searchParams.get('all') === '1';
 
-  // 1. Query Supabase directly if connected (ONLY status = 'approved')
+  // 1. Query Supabase directly if connected (Single Source of Truth)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -18,7 +20,10 @@ export async function GET(request: NextRequest) {
       const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
         auth: { persistSession: false },
       });
-      let q = supabaseAdmin.from('places').select('*').eq('status', 'approved');
+      let q = supabaseAdmin.from('places').select('*');
+      if (!includeAll) {
+        q = q.eq('status', 'approved');
+      }
       if (categoryId) {
         q = q.eq('category_id', categoryId);
       }
@@ -41,26 +46,33 @@ export async function GET(request: NextRequest) {
           );
         }
 
-        return NextResponse.json({ places, count: places.length });
+        return NextResponse.json(
+          { places, count: places.length },
+          { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
+        );
       }
     } catch (e: any) {
       console.warn('GET /api/places Supabase query notice:', e.message);
     }
   }
 
-  // 2. Fallback to store (which strictly filters status === 'approved')
-  const places = store.filterPlaces({
-    query,
-    categoryId,
-  });
+  // 2. Fallback to store
+  const places = includeAll 
+    ? store.getAllPlacesAdmin() 
+    : store.filterPlaces({ query, categoryId });
 
-  return NextResponse.json({ places, count: places.length });
+  return NextResponse.json(
+    { places, count: places.length },
+    { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
+  );
 }
 
 const isUuid = (str?: string | null): boolean => {
   if (!str) return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 };
+
+const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
 
 export async function POST(request: NextRequest) {
   try {
@@ -77,6 +89,7 @@ export async function POST(request: NextRequest) {
       images,
       created_by,
       amenities,
+      status: requestedStatus,
     } = body;
 
     if (!name?.trim() || !address?.trim() || lat == null || lng == null) {
@@ -89,83 +102,166 @@ export async function POST(request: NextRequest) {
     let createdId: string | null = null;
     let createdLat = Number(lat);
     let createdLng = Number(lng);
-    const validCreatedBy = isUuid(created_by) ? created_by : null;
+    const placeStatus = (requestedStatus === 'approved' || requestedStatus === 'hidden' || requestedStatus === 'rejected')
+      ? requestedStatus
+      : 'pending';
 
     // 1. Persist directly to Supabase public.places
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
+      const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+        auth: { persistSession: false },
+      });
+
+      // Validate created_by foreign key to prevent PostgreSQL foreign key violation
+      let validCreatedBy: string | null = null;
+      if (isUuid(created_by)) {
+        try {
+          const { data: userRow } = await supabaseAdmin
+            .from('users')
+            .select('id')
+            .eq('id', created_by)
+            .maybeSingle();
+          if (userRow?.id) {
+            validCreatedBy = userRow.id;
+          }
+        } catch (uErr) {}
+      }
+
+      // Validate category_id foreign key
+      let validCatId = Number(category_id) || 1;
       try {
-        const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-          auth: { persistSession: false },
+        const { data: catRow } = await supabaseAdmin
+          .from('categories')
+          .select('id')
+          .eq('id', validCatId)
+          .maybeSingle();
+        if (!catRow) {
+          validCatId = 1;
+        }
+      } catch (cErr) {}
+
+      const insertPayload: any = {
+        name: name.trim(),
+        category_id: validCatId,
+        address: address.trim(),
+        lat: createdLat,
+        lng: createdLng,
+        description: description?.trim() || '',
+        opening_hours: opening_hours || null,
+        price_level: Number(price_level) || 2,
+        images: images && Array.isArray(images) ? images : [],
+        status: placeStatus,
+        created_by: validCreatedBy,
+      };
+
+      if (placeStatus === 'approved') {
+        insertPayload.approved_at = new Date().toISOString();
+      }
+
+      const { data: inserted, error: insertErr } = await supabaseAdmin
+        .from('places')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+
+      if (insertErr) {
+        console.error('Supabase places table insert error:', insertErr.message);
+        return NextResponse.json({ success: false, error: insertErr.message }, { status: 500 });
+      }
+
+      if (inserted) {
+        createdId = inserted.id;
+        createdLat = Number(inserted.lat);
+        createdLng = Number(inserted.lng);
+
+        // Save place_amenities if provided
+        if (amenities && Array.isArray(amenities) && amenities.length > 0) {
+          const rows = amenities.map((a: any) => ({
+            place_id: createdId,
+            amenity_id: typeof a === 'object' ? a.id : Number(a),
+          })).filter((r: any) => !isNaN(r.amenity_id));
+          if (rows.length > 0) {
+            try {
+              await supabaseAdmin.from('place_amenities').insert(rows);
+            } catch (paErr) {}
+          }
+        }
+
+        // When a proposal is created (pending), WRITE notification into public.notifications for Admin
+        if (placeStatus === 'pending') {
+          try {
+            // Find all Admin users in public.users
+            const { data: admins } = await supabaseAdmin
+              .from('users')
+              .select('id')
+              .or(`role.eq.admin,email.ilike.${ADMIN_EMAIL}`);
+
+            let targetAdmins = admins && admins.length > 0 ? admins : [];
+
+            if (targetAdmins.length === 0) {
+              // Check auth.admin
+              try {
+                const { data: authList } = await supabaseAdmin.auth.admin.listUsers();
+                const authAdmin = authList?.users?.find(
+                  (u) => u.email?.toLowerCase() === ADMIN_EMAIL || u.user_metadata?.role === 'admin'
+                );
+                if (authAdmin) {
+                  await supabaseAdmin.from('users').upsert({
+                    id: authAdmin.id,
+                    email: authAdmin.email || ADMIN_EMAIL,
+                    full_name: authAdmin.user_metadata?.full_name || 'Admin StudySpot',
+                    role: 'admin',
+                  });
+                  targetAdmins = [{ id: authAdmin.id }];
+                }
+              } catch (authErr) {}
+            }
+
+            if (targetAdmins.length > 0) {
+              const notifRows = targetAdmins.map((adm) => ({
+                user_id: adm.id,
+                noi_dung: `Có đề xuất địa điểm mới: "${name.trim()}" đang chờ duyệt.`,
+                link: '/admin/de-xuat',
+                is_read: false,
+              }));
+              await supabaseAdmin.from('notifications').insert(notifRows);
+            }
+          } catch (notifErr: any) {
+            console.warn('Proposal notification write notice:', notifErr.message);
+          }
+        }
+
+        // Also save to in-memory store
+        store.savePlace({
+          ...inserted,
+          opening_hours: typeof inserted.opening_hours === 'string' ? JSON.parse(inserted.opening_hours) : inserted.opening_hours,
         });
 
-        const { data: inserted, error: insertErr } = await supabaseAdmin
-          .from('places')
-          .insert({
-            name: name.trim(),
-            category_id: category_id || 1,
-            address: address.trim(),
-            lat: createdLat,
-            lng: createdLng,
-            description: description?.trim() || '',
-            opening_hours: opening_hours || null,
-            price_level: price_level || 2,
-            images: images || [],
-            status: 'pending',
-            created_by: validCreatedBy,
-          })
-          .select('id, name, address, lat, lng')
-          .single();
-
-        if (!insertErr && inserted) {
-          createdId = inserted.id;
-          createdLat = Number(inserted.lat);
-          createdLng = Number(inserted.lng);
-
-          // Save place_amenities if provided
-          if (amenities && Array.isArray(amenities) && amenities.length > 0) {
-            const rows = amenities.map((a: any) => ({
-              place_id: createdId,
-              amenity_id: typeof a === 'object' ? a.id : Number(a),
-            })).filter((r: any) => !isNaN(r.amenity_id));
-            if (rows.length > 0) {
-              try {
-                await supabaseAdmin.from('place_amenities').insert(rows);
-              } catch (paErr) {}
-            }
-          }
-        } else if (insertErr) {
-          console.warn('Supabase places table insert notice:', insertErr.message);
-        }
-      } catch (dbErr: any) {
-        console.warn('Supabase places table network exception:', dbErr.message);
+        return NextResponse.json(
+          {
+            success: true,
+            place: inserted,
+          },
+          { status: 201 }
+        );
       }
     }
 
-    // 2. Persist in client store (with Supabase UUID or in-memory generated ID)
+    // Fallback if Supabase not configured
     const newPlace = store.proposePlace({
       ...body,
-      id: createdId || undefined,
+      status: placeStatus,
       lat: createdLat,
       lng: createdLng,
-      created_by: validCreatedBy,
     });
 
-    const finalId = createdId || newPlace.id;
-
-    // 3. Return created record { id, name, address, lat, lng } as required
     return NextResponse.json(
       {
         success: true,
-        place: {
-          id: finalId,
-          name: name.trim(),
-          address: address.trim(),
-          lat: createdLat,
-          lng: createdLng,
-        },
+        place: newPlace,
       },
       { status: 201 }
     );
@@ -290,9 +386,15 @@ export async function DELETE(request: NextRequest) {
 
     if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
       const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-      const { error } = await supabaseAdmin.from('places').delete().eq('id', placeId);
-      if (error) {
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      if (isUuid(placeId)) {
+        await supabaseAdmin.from('place_amenities').delete().eq('place_id', placeId);
+        await supabaseAdmin.from('checkins').delete().eq('place_id', placeId);
+        await supabaseAdmin.from('reviews').delete().eq('place_id', placeId);
+        await supabaseAdmin.from('favorites').delete().eq('place_id', placeId);
+        const { error } = await supabaseAdmin.from('places').delete().eq('id', placeId);
+        if (error) {
+          return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        }
       }
     }
 

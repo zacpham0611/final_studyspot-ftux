@@ -244,16 +244,17 @@ export default function AdminPlacesPage() {
 
     const payload = {
       name: newName.trim(),
-      category_id: newCatId,
+      category_id: Number(newCatId),
       address: newAddress.trim(),
-      lat: newLat,
-      lng: newLng,
-      price_level: newPrice,
+      lat: Number(newLat),
+      lng: Number(newLng),
+      price_level: Number(newPrice),
       description: newDescription.trim(),
-      images: newInitialImage.trim() ? [newInitialImage.trim()] : undefined,
+      images: newInitialImage.trim() ? [newInitialImage.trim()] : [],
+      status: 'approved',
+      created_by: store.getCurrentUser()?.id,
     };
 
-    let targetId: string | null = null;
     try {
       const res = await fetch('/api/places', {
         method: 'POST',
@@ -261,28 +262,32 @@ export default function AdminPlacesPage() {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (data.success && data.place) {
-        targetId = data.place.id;
-        // Approve directly
-        await fetch('/api/places', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ placeId: targetId, status: 'approved' }),
-        });
+      
+      if (!res.ok || !data.success || !data.place?.id) {
+        showToast(data.error || 'Lỗi khi tạo địa điểm vào Supabase', 'error');
+        return;
       }
-    } catch (err) {}
 
-    if (!targetId) {
-      const created = store.proposePlace(payload);
-      targetId = created.id;
+      // Successfully created with real UUID from Supabase
+      const createdPlace: Place = {
+        ...data.place,
+        status: 'approved',
+        approved_at: data.place.approved_at || new Date().toISOString(),
+      };
+      store.savePlace(createdPlace);
+      await store.loadFromSupabase();
+      loadData();
+
+      setIsAddPlaceOpen(false);
+      setNewName('');
+      setNewAddress('');
+      setNewDescription('');
+      setNewInitialImage('');
+      showToast(`Đã tạo địa điểm "${payload.name}" thành công với trạng thái Hoạt động!`, 'success');
+    } catch (err: any) {
+      console.error('Create place error:', err);
+      showToast('Lỗi kết nối khi tạo địa điểm: ' + err.message, 'error');
     }
-
-    store.updatePlaceStatus(targetId, 'approved');
-    loadData();
-    setIsAddPlaceOpen(false);
-    setNewName('');
-    setNewAddress('');
-    showToast(`Đã tạo địa điểm "${payload.name}" với trạng thái Hoạt động!`, 'success');
   };
 
   const filtered = places.filter((p) => {

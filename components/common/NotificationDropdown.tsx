@@ -29,8 +29,44 @@ export function NotificationDropdown({ currentUser }: NotificationDropdownProps)
 
   useEffect(() => {
     loadNotifications();
-    const interval = setInterval(loadNotifications, 5000);
-    return () => clearInterval(interval);
+    const unsubscribe = store.subscribe(() => {
+      loadNotifications();
+    });
+
+    const syncServerNotifs = async () => {
+      if (!currentUser) return;
+      try {
+        const res = await fetch(`/api/notifications?userId=${currentUser.id}`, { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json.notifications)) {
+            let hasNew = false;
+            const currentList = store.getNotifications(currentUser.id);
+            for (const n of json.notifications) {
+              if (!currentList.some((x) => x.id === n.id)) {
+                hasNew = true;
+                break;
+              }
+            }
+            if (hasNew) {
+              await store.loadFromSupabase();
+              loadNotifications();
+            }
+          }
+        }
+      } catch (e) {}
+    };
+
+    syncServerNotifs();
+    const interval = setInterval(() => {
+      loadNotifications();
+      syncServerNotifs();
+    }, 5000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, [currentUser]);
 
   // Click outside listener

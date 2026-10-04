@@ -47,6 +47,7 @@ class StudySpotStore {
   };
   private currentUser: UserProfile | null = null; // Default: Guest / Unauthenticated
   private listeners: Set<() => void> = new Set();
+  private deletedPlaceIds: Set<string> = new Set();
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -68,8 +69,20 @@ class StudySpotStore {
   constructor() {
     if (typeof window !== 'undefined') {
       try {
+        const storedDeleted = localStorage.getItem('studyspot_deleted_places_v2');
+        if (storedDeleted) {
+          try {
+            this.deletedPlaceIds = new Set(JSON.parse(storedDeleted));
+          } catch (e) {}
+        }
+
         const storedPlaces = localStorage.getItem('studyspot_places_v2');
-        if (storedPlaces) this.places = JSON.parse(storedPlaces);
+        if (storedPlaces) {
+          try {
+            const parsed = JSON.parse(storedPlaces);
+            this.places = parsed.filter((p: Place) => !this.deletedPlaceIds.has(p.id));
+          } catch (e) {}
+        }
 
         const storedCheckins = localStorage.getItem('studyspot_checkins_v2');
         if (storedCheckins) this.checkins = JSON.parse(storedCheckins);
@@ -115,6 +128,7 @@ class StudySpotStore {
   private persist() {
     if (typeof window !== 'undefined') {
       try {
+        localStorage.setItem('studyspot_deleted_places_v2', JSON.stringify(Array.from(this.deletedPlaceIds)));
         localStorage.setItem('studyspot_places_v2', JSON.stringify(this.places));
         localStorage.setItem('studyspot_checkins_v2', JSON.stringify(this.checkins));
         localStorage.setItem('studyspot_reviews_v2', JSON.stringify(this.reviews));
@@ -250,7 +264,7 @@ class StudySpotStore {
         helpfulRes,
       ] = await Promise.all([
         supabase.from('users').select('*').order('created_at', { ascending: false }),
-        supabase.from('places').select('*, place_amenities(amenity_id, amenities(*))'),
+        supabase.from('places').select('*'),
         supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
         supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
         supabase.from('favorites').select('*'),
@@ -265,15 +279,45 @@ class StudySpotStore {
         this.users = usersRes.data;
       }
 
-      if (placesRes.data && placesRes.data.length > 0) {
-        this.places = placesRes.data.map((dp: any) => ({
-          ...dp,
-          opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours),
-          price_level: dp.price_level || 2,
-          images: dp.images || [],
-          view_count: dp.view_count || 0,
-          amenities: dp.place_amenities?.map((pa: any) => pa.amenities).filter(Boolean) || dp.amenities || [],
-        }));
+      // --- Authoritative Places Sync (Single Source of Truth) ---
+      let rawPlaces: any[] | null = null;
+      if (placesRes.data) {
+        rawPlaces = placesRes.data;
+      } else {
+        // Fallback to Next.js API route /api/places?all=1 with service role permissions
+        try {
+          const apiRes = await fetch('/api/places?all=1', { cache: 'no-store' });
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (Array.isArray(apiData.places)) {
+              rawPlaces = apiData.places;
+            }
+          }
+        } catch (apiErr) {
+          console.warn('Fallback /api/places?all=1 fetch notice:', apiErr);
+        }
+      }
+
+      if (rawPlaces !== null) {
+        // Supabase is the single source of truth:
+        // REPLACE this.places completely with Supabase data, filtering out any deleted places
+        this.places = rawPlaces
+          .filter((dp: any) => !this.deletedPlaceIds.has(dp.id))
+          .map((dp: any) => ({
+            ...dp,
+            opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours),
+            price_level: dp.price_level || 2,
+            images: dp.images || [],
+            view_count: dp.view_count || 0,
+            amenities: dp.amenities || [],
+          }));
+
+        // Immediately overwrite localStorage so stale deleted places are completely purged
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('studyspot_places_v2', JSON.stringify(this.places));
+          } catch (e) {}
+        }
       }
 
       if (reviewsRes.data && reviewsRes.data.length > 0) {
@@ -294,8 +338,24 @@ class StudySpotStore {
         }
       }
 
-      if (notificationsRes.data) {
-        this.notifications = notificationsRes.data;
+      let supaNotifs: Notification[] | null = null;
+      if (notificationsRes.data && notificationsRes.data.length > 0) {
+        supaNotifs = notificationsRes.data;
+      } else {
+        // Fallback to /api/notifications with service role permissions
+        try {
+          const notifRes = await fetch('/api/notifications', { cache: 'no-store' });
+          if (notifRes.ok) {
+            const notifJson = await notifRes.json();
+            if (Array.isArray(notifJson.notifications) && notifJson.notifications.length > 0) {
+              supaNotifs = notifJson.notifications;
+            }
+          }
+        } catch (nErr) {}
+      }
+
+      if (supaNotifs !== null) {
+        this.notifications = supaNotifs;
       }
 
       if (categoriesRes.data && categoriesRes.data.length > 0) {
@@ -326,7 +386,9 @@ class StudySpotStore {
     const targetLat = userLat ?? FTU_COORDINATES.lat;
     const targetLng = userLng ?? FTU_COORDINATES.lng;
 
-    return this.places.map((place) => {
+    return this.places
+      .filter((place) => !this.deletedPlaceIds.has(place.id))
+      .map((place) => {
       const placeCheckins = this.checkins.filter((c) => c.place_id === place.id);
       const crowd = calculateCrowdStatus(placeCheckins);
       const distance = calculateDistance(place.lat, place.lng, targetLat, targetLng);
@@ -895,8 +957,23 @@ class StudySpotStore {
 
   // --- Notifications ---
   getNotifications(userId?: string): Notification[] {
-    const uid = userId || this.currentUser?.id;
+    const user = this.currentUser;
+    const uid = userId || user?.id;
     if (!uid) return [];
+
+    const isAdminUser = 
+      user?.role === 'admin' || 
+      (user?.email && user.email.toLowerCase() === 'admin123@ftu.edu.vn') || 
+      uid === 'a0000000-0000-0000-0000-000000000001';
+
+    if (isAdminUser) {
+      return this.notifications.filter((n) => 
+        n.user_id === uid || 
+        n.link?.startsWith('/admin') || 
+        n.noi_dung?.toLowerCase().includes('đề xuất')
+      );
+    }
+
     return this.notifications.filter((n) => n.user_id === uid);
   }
 
@@ -908,12 +985,19 @@ class StudySpotStore {
     const uid = userId || this.currentUser?.id;
     if (!uid) return;
     for (const n of this.notifications) {
-      if (n.user_id === uid) n.is_read = true;
+      if (n.user_id === uid || n.link?.startsWith('/admin')) n.is_read = true;
     }
     this.persist();
     this.notify();
-    if (typeof window !== 'undefined' && isUuid(uid)) {
-      supabase.from('notifications').update({ is_read: true }).eq('user_id', uid).then();
+    if (typeof window !== 'undefined') {
+      if (isUuid(uid)) {
+        supabase.from('notifications').update({ is_read: true }).eq('user_id', uid).then();
+      }
+      fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: uid, markAll: true }),
+      }).catch(() => {});
     }
   }
 
@@ -923,8 +1007,15 @@ class StudySpotStore {
       notif.is_read = true;
       this.persist();
       this.notify();
-      if (typeof window !== 'undefined' && isUuid(notificationId)) {
-        supabase.from('notifications').update({ is_read: true }).eq('id', notificationId).then();
+      if (typeof window !== 'undefined') {
+        if (isUuid(notificationId)) {
+          supabase.from('notifications').update({ is_read: true }).eq('id', notificationId).then();
+        }
+        fetch('/api/notifications', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notificationId }),
+        }).catch(() => {});
       }
     }
   }
@@ -943,18 +1034,38 @@ class StudySpotStore {
     this.notify();
 
     // Persist to Supabase public.notifications
-    if (typeof window !== 'undefined' && isUuid(userId)) {
-      supabase.from('notifications').insert({
-        user_id: userId,
-        noi_dung,
-        link: link || null,
-        is_read: false,
-      }).select().single().then(({ data, error }) => {
-        if (data?.id) {
-          newNotif.id = data.id;
-          this.persist();
+    if (typeof window !== 'undefined') {
+      if (isUuid(userId) && userId !== 'a0000000-0000-0000-0000-000000000001') {
+        supabase.from('notifications').insert({
+          user_id: userId,
+          noi_dung,
+          link: link || null,
+          is_read: false,
+        }).select().single().then(({ data, error }) => {
+          if (data?.id) {
+            newNotif.id = data.id;
+            this.persist();
+          }
+          if (error) console.warn('Supabase notification client insert notice:', error.message);
+        });
+      }
+
+      // Also call server API route with service role permissions to bypass client RLS & resolve real admin UUID
+      fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, noi_dung, link }),
+      }).then(async (res) => {
+        if (res.ok) {
+          const json = await res.json();
+          if (json.notification?.id) {
+            newNotif.id = json.notification.id;
+            newNotif.user_id = json.notification.user_id;
+            this.persist();
+          }
         }
-        if (error) console.warn('Supabase notification notice:', error.message);
+      }).catch((e) => {
+        console.warn('API notification error:', e);
       });
     }
 
@@ -1035,8 +1146,12 @@ class StudySpotStore {
     this.places.unshift(newPlace);
     
     // Notify admin
+    const adminUser = this.users.find(
+      (u) => u.role === 'admin' || u.email.toLowerCase() === 'admin123@ftu.edu.vn'
+    );
+    const adminTargetId = adminUser?.id || 'a0000000-0000-0000-0000-000000000001';
     this.createNotification(
-      'a0000000-0000-0000-0000-000000000001',
+      adminTargetId,
       `Có đề xuất địa điểm mới: "${newPlace.name}" đang chờ duyệt.`,
       '/admin/de-xuat'
     );
@@ -1134,23 +1249,28 @@ class StudySpotStore {
   }
 
   deletePlace(placeId: string): boolean {
-    const idx = this.places.findIndex((x) => x.id === placeId);
-    if (idx !== -1) {
-      this.places.splice(idx, 1);
-      this.persist();
-      this.notify();
+    this.deletedPlaceIds.add(placeId);
+    this.places = this.places.filter((x) => x.id !== placeId);
+    this.persist();
+    this.notify();
 
-      if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined') {
+      if (isUuid(placeId)) {
         supabase.from('places').delete().eq('id', placeId).then(({ error }) => {
           if (error) console.warn('Supabase deletePlace error:', error.message);
         });
       }
-      return true;
+      fetch(`/api/places?id=${encodeURIComponent(placeId)}`, { method: 'DELETE' }).catch((err) => {
+        console.warn('API deletePlace error:', err);
+      });
     }
-    return false;
+    return true;
   }
 
   savePlace(place: Place): void {
+    if (this.deletedPlaceIds.has(place.id)) {
+      this.deletedPlaceIds.delete(place.id);
+    }
     const idx = this.places.findIndex((x) => x.id === place.id);
     if (idx !== -1) {
       this.places[idx] = place;
@@ -1158,6 +1278,7 @@ class StudySpotStore {
       this.places.unshift(place);
     }
     this.persist();
+    this.notify();
   }
 
   getAllUsers(): UserProfile[] {

@@ -31,6 +31,24 @@ function MapFlyController({
 }) {
   const map = useMap();
 
+  // Invalidate map size so Leaflet measures container correctly and triggers tile loading
+  useEffect(() => {
+    map.invalidateSize();
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+
+    const handleResize = () => {
+      map.invalidateSize();
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [map]);
+
   useEffect(() => {
     if (selectedPlace) {
       map.flyTo([selectedPlace.lat, selectedPlace.lng], 16, {
@@ -77,8 +95,10 @@ export default function MapContainer({
       >
         {/* OpenStreetMap Standard Free Tiles (Never requires API key) */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url={process.env.NEXT_PUBLIC_MAP_TILE_URL || "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"}
+          subdomains="abcd"
+          maxZoom={19}
         />
 
         <MapFlyController selectedPlace={selectedPlace} targetCoords={targetCoords} markerRefs={markerRefs} />

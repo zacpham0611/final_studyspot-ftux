@@ -41,6 +41,10 @@ export function Header() {
 
   useEffect(() => {
     loadUserData();
+    const unsubscribe = store.subscribe(() => {
+      loadUserData();
+    });
+    return () => unsubscribe();
   }, [pathname, currentUser]);
 
   // Click outside to close dropdowns

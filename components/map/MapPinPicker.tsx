@@ -66,6 +66,15 @@ function LocationMarker({
 // Controller to smoothly pan/zoom map to selected location
 function MapViewController({ lat, lng }: { lat: number; lng: number }) {
   const map = useMap();
+
+  useEffect(() => {
+    map.invalidateSize();
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [map]);
+
   useEffect(() => {
     if (lat && lng) {
       map.flyTo([lat, lng], 17, { animate: true, duration: 0.8 });
@@ -91,8 +100,10 @@ export default function MapPinPicker({
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url={process.env.NEXT_PUBLIC_MAP_TILE_URL || "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"}
+          subdomains="abcd"
+          maxZoom={19}
         />
         <MapViewController lat={lat} lng={lng} />
         <LocationMarker lat={lat} lng={lng} onChange={onChange} />

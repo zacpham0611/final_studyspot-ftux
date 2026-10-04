@@ -131,18 +131,23 @@ function HomePageContent() {
 
   useEffect(() => {
     loadData();
+    // Authoritative fetch from Supabase to guarantee cross-device sync
+    store.loadFromSupabase().then(() => {
+      loadData();
+    });
+
     const unsubscribe = store.subscribe(() => {
       loadData();
     });
     return () => unsubscribe();
   }, [filterOptions]);
 
-  // Polling crowd data every 60 seconds
+  // Polling data every 60 seconds from Supabase
   useEffect(() => {
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       setIsRefreshing(true);
-      const filtered = store.filterPlaces(filterOptions);
-      setPlaces(filtered);
+      await store.loadFromSupabase();
+      loadData();
       setTimeout(() => setIsRefreshing(false), 600);
     }, 60000);
 
@@ -270,9 +275,19 @@ function HomePageContent() {
           <div className="flex items-center justify-between text-xs pt-1">
             <span className="font-semibold text-gray-600 flex items-center gap-1.5">
               <span>{places.length} địa điểm</span>
-              {isRefreshing && (
-                <RefreshCw className="w-3 h-3 text-burgundy animate-spin" />
-              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsRefreshing(true);
+                  await store.loadFromSupabase();
+                  loadData();
+                  setTimeout(() => setIsRefreshing(false), 600);
+                }}
+                title="Làm mới dữ liệu từ Supabase"
+                className="hover:text-burgundy transition-colors p-0.5"
+              >
+                <RefreshCw className={`w-3 h-3 text-burgundy ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
             </span>
 
             <div className="flex items-center gap-2">
