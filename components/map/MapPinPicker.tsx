@@ -71,7 +71,7 @@ function MapViewController({ lat, lng }: { lat: number; lng: number }) {
     map.invalidateSize();
     const timer = setTimeout(() => {
       map.invalidateSize();
-    }, 250);
+    }, 200);
     return () => clearTimeout(timer);
   }, [map]);
 
@@ -101,7 +101,7 @@ export default function MapPinPicker({
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url={process.env.NEXT_PUBLIC_MAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"}
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={19}
         />
         <MapViewController lat={lat} lng={lng} />

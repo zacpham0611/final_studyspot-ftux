@@ -29,7 +29,10 @@ body {
 }
 
 .leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
   font-family: var(--font-be-vietnam) !important;
+  background-color: #f1f5f9 !important;
 }
 
 /* Hide scrollbar for clean horizontal chips */

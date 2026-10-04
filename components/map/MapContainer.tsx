@@ -19,24 +19,15 @@ interface MapContainerProps {
   minHeight?: string;
 }
 
-// Controller to fly to place and open popup or reset to FTU center
-function MapFlyController({ 
-  selectedPlace, 
-  targetCoords,
-  markerRefs 
-}: { 
-  selectedPlace?: Place; 
-  targetCoords?: { lat: number; lng: number } | null;
-  markerRefs: React.MutableRefObject<Record<string, L.Marker | null>> 
-}) {
+// Handler to ensure Leaflet measures container size properly and loads tiles
+function MapResizeHandler() {
   const map = useMap();
 
-  // Invalidate map size so Leaflet measures container correctly and triggers tile loading
   useEffect(() => {
     map.invalidateSize();
     const timer = setTimeout(() => {
       map.invalidateSize();
-    }, 250);
+    }, 200);
 
     const handleResize = () => {
       map.invalidateSize();
@@ -49,8 +40,48 @@ function MapFlyController({
     };
   }, [map]);
 
+  return null;
+}
+
+// Controller to fly to place and open popup or reset to FTU center
+function MapFlyController({ 
+  selectedPlace, 
+  targetCoords,
+  markerRefs 
+}: { 
+  selectedPlace?: Place; 
+  targetCoords?: { lat: number; lng: number } | null;
+  markerRefs: React.MutableRefObject<Record<string, L.Marker | null>> 
+}) {
+  const map = useMap();
+  const isFirstRender = useRef(true);
+  const prevPlaceId = useRef<string | undefined>(undefined);
+
   useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      prevPlaceId.current = selectedPlace?.id;
+      // On initial mount, map is already centered at FTU unless place or coords requested
+      if (selectedPlace) {
+        map.flyTo([selectedPlace.lat, selectedPlace.lng], 16, {
+          animate: true,
+          duration: 1.0,
+        });
+        const targetMarker = markerRefs.current[selectedPlace.id];
+        if (targetMarker) {
+          targetMarker.openPopup();
+        }
+      } else if (targetCoords) {
+        map.flyTo([targetCoords.lat, targetCoords.lng], 16, {
+          animate: true,
+          duration: 1.0,
+        });
+      }
+      return;
+    }
+
     if (selectedPlace) {
+      prevPlaceId.current = selectedPlace.id;
       map.flyTo([selectedPlace.lat, selectedPlace.lng], 16, {
         animate: true,
         duration: 1.0,
@@ -65,13 +96,15 @@ function MapFlyController({
         animate: true,
         duration: 1.0,
       });
-    } else {
+    } else if (prevPlaceId.current) {
+      // Only fly back to FTU if a place was previously selected and is now deselected
+      prevPlaceId.current = undefined;
       map.flyTo([FTU_COORDINATES.lat, FTU_COORDINATES.lng], 16, {
         animate: true,
         duration: 0.8,
       });
     }
-  }, [selectedPlace, targetCoords, map, markerRefs]);
+  }, [selectedPlace?.id, selectedPlace?.lat, selectedPlace?.lng, targetCoords?.lat, targetCoords?.lng, map, markerRefs]);
 
   return null;
 }
@@ -96,10 +129,11 @@ export default function MapContainer({
         {/* OpenStreetMap Standard Free Tiles (Never requires API key) */}
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url={process.env.NEXT_PUBLIC_MAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"}
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={19}
         />
 
+        <MapResizeHandler />
         <MapFlyController selectedPlace={selectedPlace} targetCoords={targetCoords} markerRefs={markerRefs} />
 
         {/* Foreign Trade University Central Marker - Burgundy #8A1538 */}
