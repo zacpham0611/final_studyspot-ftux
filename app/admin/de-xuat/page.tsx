@@ -32,54 +32,52 @@ export default function AdminProposalsPage() {
   const [rejectModalPlace, setRejectModalPlace] = useState<Place | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  const loadData = () => {
-    const all = store.getAllPlacesAdmin();
-    setProposals(all.filter((p) => p.status === 'pending'));
+  const [loading, setLoading] = useState(true);
+
+  const loadProposals = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/places?status=pending', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.places)) {
+          setProposals(data.places);
+          data.places.forEach((p: Place) => store.savePlace(p));
+        }
+      }
+    } catch (e: any) {
+      console.warn('Admin proposals fetch notice:', e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadData();
-
-    // Directly fetch all places from server (uses service role key to bypass client RLS)
-    fetch('/api/places?all=1', { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data.places)) {
-          data.places.forEach((p: Place) => store.savePlace(p));
-          setProposals(data.places.filter((p: Place) => p.status === 'pending'));
-        }
-      })
-      .catch((err) => {
-        console.warn('Initial admin proposals fetch notice:', err);
-      })
-      .finally(() => {
-        store.loadFromSupabase().then(loadData);
-      });
-
-    const unsubscribe = store.subscribe(() => {
-      loadData();
-    });
-    return () => unsubscribe();
+    loadProposals();
   }, []);
 
   const handleApprove = async (placeId: string, placeName: string) => {
     // 1. Optimistic update
     store.approveProposal(placeId);
-    loadData();
+    setProposals((prev) => prev.filter((p) => p.id !== placeId));
     setActiveDrawerPlace(null);
     showToast(`Đã duyệt xuất bản địa điểm: "${placeName}" và gửi thông báo tới người đề xuất!`, 'success');
 
     // 2. Persist to Supabase
     try {
-      await fetch('/api/places', {
+      const res = await fetch('/api/places', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId, status: 'approved' }),
       });
-      await store.loadFromSupabase();
-      loadData();
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Lỗi cập nhật trên máy chủ');
+      }
+      await loadProposals();
     } catch (e: any) {
-      console.warn('Approve proposal sync notice:', e.message);
+      showToast(e.message || 'Lỗi duyệt đề xuất', 'error');
+      await loadProposals();
     }
   };
 
@@ -94,23 +92,27 @@ export default function AdminProposalsPage() {
 
     // 1. Optimistic update
     store.rejectProposal(targetPlaceId, reason);
+    setProposals((prev) => prev.filter((p) => p.id !== targetPlaceId));
     setRejectModalPlace(null);
     setRejectReason('');
     setActiveDrawerPlace(null);
-    loadData();
     showToast('Đã từ chối đề xuất và gửi thông báo giải thích cho sinh viên', 'info');
 
     // 2. Persist to Supabase
     try {
-      await fetch('/api/places', {
+      const res = await fetch('/api/places', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId: targetPlaceId, status: 'rejected', rejectReason: reason }),
       });
-      await store.loadFromSupabase();
-      loadData();
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Lỗi cập nhật trên máy chủ');
+      }
+      await loadProposals();
     } catch (e: any) {
-      console.warn('Reject proposal sync notice:', e.message);
+      showToast(e.message || 'Lỗi từ chối đề xuất', 'error');
+      await loadProposals();
     }
   };
 
@@ -119,7 +121,7 @@ export default function AdminProposalsPage() {
     store.removePlaceImage(activeDrawerPlace.id, index);
     const updated = store.getPlaceById(activeDrawerPlace.id);
     setActiveDrawerPlace(updated || null);
-    loadData();
+    loadProposals();
     showToast('Đã gỡ bỏ ảnh không phù hợp khỏi đề xuất', 'info');
   };
 

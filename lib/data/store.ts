@@ -324,8 +324,9 @@ class StudySpotStore {
         this.reviews = reviewsRes.data;
       }
 
-      if (checkinsRes.data && checkinsRes.data.length > 0) {
-        this.checkins = checkinsRes.data;
+      if (checkinsRes.data) {
+        const validPlaceIds = new Set(this.places.map((p) => p.id));
+        this.checkins = checkinsRes.data.filter((c: any) => validPlaceIds.has(c.place_id));
       }
 
       if (favoritesRes.data) {
@@ -339,19 +340,18 @@ class StudySpotStore {
       }
 
       let supaNotifs: Notification[] | null = null;
-      if (notificationsRes.data && notificationsRes.data.length > 0) {
-        supaNotifs = notificationsRes.data;
-      } else {
-        // Fallback to /api/notifications with service role permissions
-        try {
-          const notifRes = await fetch('/api/notifications', { cache: 'no-store' });
-          if (notifRes.ok) {
-            const notifJson = await notifRes.json();
-            if (Array.isArray(notifJson.notifications) && notifJson.notifications.length > 0) {
-              supaNotifs = notifJson.notifications;
-            }
+      try {
+        const notifRes = await fetch('/api/notifications', { cache: 'no-store' });
+        if (notifRes.ok) {
+          const notifJson = await notifRes.json();
+          if (Array.isArray(notifJson.notifications)) {
+            supaNotifs = notifJson.notifications;
           }
-        } catch (nErr) {}
+        }
+      } catch (nErr) {}
+
+      if (!supaNotifs && notificationsRes.data) {
+        supaNotifs = notificationsRes.data;
       }
 
       if (supaNotifs !== null) {
@@ -659,6 +659,11 @@ class StudySpotStore {
       message: 'Báo độ đông thành công! Cảm ơn bạn đã đóng góp cho cộng đồng FTU.',
       checkin: newCheckin,
     };
+  }
+
+  getAllCheckins(): Checkin[] {
+    const validPlaceIds = new Set(this.places.map((p) => p.id));
+    return this.checkins.filter((c) => validPlaceIds.has(c.place_id));
   }
 
   getCheckinsForPlace(placeId: string): Checkin[] {
@@ -999,6 +1004,16 @@ class StudySpotStore {
         body: JSON.stringify({ userId: uid, markAll: true }),
       }).catch(() => {});
     }
+  }
+
+  syncNotifications(notifs: Notification[]): void {
+    if (!Array.isArray(notifs)) return;
+    for (const n of notifs) {
+      if (!this.notifications.some((x) => x.id === n.id)) {
+        this.notifications.unshift(n);
+      }
+    }
+    this.persist();
   }
 
   markNotificationRead(notificationId: string): void {

@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     const userId = searchParams.get('userId');
     const roleCookie = request.cookies.get('studyspot_role')?.value?.toLowerCase();
     const emailCookie = request.cookies.get('studyspot_user_email')?.value?.toLowerCase();
-    const isAdmin = roleCookie === 'admin' || emailCookie === ADMIN_EMAIL;
+    let isAdmin = roleCookie === 'admin' || emailCookie === ADMIN_EMAIL;
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -28,12 +28,30 @@ export async function GET(request: NextRequest) {
         auth: { persistSession: false },
       });
 
+      // Verify admin role against public.users if cookie is missing
+      if (!isAdmin && userId && isUuid(userId)) {
+        try {
+          const { data: uRow } = await supabaseAdmin
+            .from('users')
+            .select('role, email')
+            .eq('id', userId)
+            .maybeSingle();
+          if (uRow && (uRow.role === 'admin' || uRow.email?.toLowerCase() === ADMIN_EMAIL)) {
+            isAdmin = true;
+          }
+        } catch (uErr) {}
+      }
+
       let query = supabaseAdmin
         .from('notifications')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (userId && !isAdmin && isUuid(userId)) {
+      if (isAdmin) {
+        if (userId && isUuid(userId)) {
+          query = query.or(`user_id.eq.${userId},link.ilike.%/admin%`);
+        }
+      } else if (userId && isUuid(userId)) {
         query = query.eq('user_id', userId);
       }
 
@@ -103,6 +121,17 @@ export async function POST(request: NextRequest) {
               targetUserId = authAdmin.id;
             }
           } catch (authErr) {}
+
+          if (!targetUserId || !isUuid(targetUserId) || targetUserId === 'a0000000-0000-0000-0000-000000000001') {
+            const defaultAdminId = 'a0000000-0000-0000-0000-000000000001';
+            await supabaseAdmin.from('users').upsert({
+              id: defaultAdminId,
+              email: ADMIN_EMAIL,
+              full_name: 'Ban Quản Trị FTU',
+              role: 'admin',
+            });
+            targetUserId = defaultAdminId;
+          }
         }
       }
 

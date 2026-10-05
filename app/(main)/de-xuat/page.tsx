@@ -237,6 +237,11 @@ function SuggestPlaceContent() {
 
     const finalLat = parseFloat(latInput);
     const finalLng = parseFloat(lngInput);
+    if (!user || !user.id) {
+      showToast('Vui lòng đăng nhập để gửi đề xuất địa điểm.', 'error');
+      return;
+    }
+
     if (isNaN(finalLat) || finalLat < -90 || finalLat > 90 || isNaN(finalLng) || finalLng < -180 || finalLng > 180) {
       showToast('Tọa độ (Latitude/Longitude) không hợp lệ', 'error');
       return;
@@ -267,7 +272,7 @@ function SuggestPlaceContent() {
         ? [imageUrl.trim()]
         : ['https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1000&q=80'],
       amenities: chosenAmenities,
-      created_by: user?.id || null,
+      created_by: user.id,
     };
 
     let targetPlaceId = '';
@@ -284,33 +289,27 @@ function SuggestPlaceContent() {
 
       const resJson = await res.json();
 
-      if (res.ok && resJson.success && resJson.place) {
-        targetPlaceId = resJson.place.id;
-        targetLat = resJson.place.lat;
-        targetLng = resJson.place.lng;
-        store.savePlace(resJson.place);
-      } else {
-        const fallbackPlace = store.proposePlace(placePayload, user || undefined);
-        targetPlaceId = fallbackPlace.id;
-        targetLat = fallbackPlace.lat;
-        targetLng = fallbackPlace.lng;
+      if (!res.ok || !resJson.success || !resJson.place) {
+        throw new Error(resJson.error || 'Lỗi gửi đề xuất địa điểm lên hệ thống.');
       }
+
+      targetPlaceId = resJson.place.id;
+      targetLat = resJson.place.lat;
+      targetLng = resJson.place.lng;
+      store.savePlace(resJson.place);
+
+      setSubmitting(false);
+      showToast(
+        'Gửi đề xuất địa điểm thành công! Quán đang ở trạng thái Chờ duyệt bởi Ban Quản Trị FTU.',
+        'success'
+      );
+
+      // 2. Auto navigate to home map, prioritizing place.id, then lat/lng
+      router.push(`/?placeId=${targetPlaceId}&lat=${targetLat}&lng=${targetLng}`);
     } catch (err: any) {
-      console.warn('Proposal submission notice:', err.message);
-      const fallbackPlace = store.proposePlace(placePayload, user || undefined);
-      targetPlaceId = fallbackPlace.id;
-      targetLat = fallbackPlace.lat;
-      targetLng = fallbackPlace.lng;
+      setSubmitting(false);
+      showToast(err.message || 'Lỗi gửi đề xuất địa điểm. Vui lòng thử lại!', 'error');
     }
-
-    setSubmitting(false);
-    showToast(
-      'Gửi đề xuất địa điểm thành công! Quán đang ở trạng thái Chờ duyệt bởi Ban Quản Trị FTU.',
-      'success'
-    );
-
-    // 2. Auto navigate to home map, prioritizing place.id, then lat/lng
-    router.push(`/?placeId=${targetPlaceId}&lat=${targetLat}&lng=${targetLng}`);
   };
 
   return (

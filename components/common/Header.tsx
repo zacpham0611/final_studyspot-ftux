@@ -41,6 +41,17 @@ export function Header() {
 
   useEffect(() => {
     loadUserData();
+    if (currentUser) {
+      fetch(`/api/notifications?userId=${currentUser.id}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data.notifications)) {
+            setNotifications(data.notifications);
+            store.syncNotifications(data.notifications);
+          }
+        })
+        .catch(() => {});
+    }
     const unsubscribe = store.subscribe(() => {
       loadUserData();
     });

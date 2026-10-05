@@ -65,31 +65,40 @@ function ProfileContent() {
         setMyReviews(allReviews.filter((r) => r.user_id === currentUser.id));
       }
 
-      // 2. Fetch live proposals by this user from Supabase
-      const { data: dbPlaces } = await supabase
-        .from('places')
-        .select('*')
-        .eq('created_by', currentUser.id)
-        .order('created_at', { ascending: false });
-
-      if (dbPlaces && dbPlaces.length > 0) {
-        setMyProposals(dbPlaces);
-      } else {
-        const allPlaces = store.getAllPlacesAdmin();
-        setMyProposals(allPlaces.filter((p) => p.created_by === currentUser.id));
+      // 2. Fetch live proposals by this user from Supabase API (service role bypasses client RLS)
+      try {
+        const pRes = await fetch(`/api/places?created_by=${encodeURIComponent(currentUser.id)}`, { cache: 'no-store' });
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          if (Array.isArray(pData.places)) {
+            setMyProposals(pData.places);
+          } else {
+            setMyProposals([]);
+          }
+        } else {
+          setMyProposals([]);
+        }
+      } catch (pErr) {
+        console.warn('Profile proposals fetch notice:', pErr);
+        setMyProposals([]);
       }
 
-      // 3. Fetch checkins from Supabase
-      const { data: dbCheckins } = await supabase
-        .from('checkins')
-        .select('*')
-        .eq('user_id', currentUser.id)
-        .order('created_at', { ascending: false });
-
-      if (dbCheckins && dbCheckins.length > 0) {
-        setMyCheckins(dbCheckins);
-      } else {
-        setMyCheckins(store.getCheckinsForPlace('p-1'));
+      // 3. Fetch checkins from API (guarantees inner join with real, existing places)
+      try {
+        const cRes = await fetch(`/api/checkins?userId=${encodeURIComponent(currentUser.id)}`, { cache: 'no-store' });
+        if (cRes.ok) {
+          const cData = await cRes.json();
+          if (Array.isArray(cData.checkins)) {
+            setMyCheckins(cData.checkins);
+          } else {
+            setMyCheckins([]);
+          }
+        } else {
+          setMyCheckins([]);
+        }
+      } catch (cErr) {
+        console.warn('Profile checkins fetch notice:', cErr);
+        setMyCheckins([]);
       }
     } catch (e) {
       console.warn('Supabase profile load warning:', e);

@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
   const categoryId = searchParams.get('category') ? Number(searchParams.get('category')) : undefined;
   const includeAll = searchParams.get('all') === '1';
   const statusParam = searchParams.get('status') || undefined;
+  const createdBy = searchParams.get('created_by') || searchParams.get('userId') || undefined;
 
   // 1. Query Supabase directly if connected (Single Source of Truth)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -22,7 +23,9 @@ export async function GET(request: NextRequest) {
         auth: { persistSession: false },
       });
       let q = supabaseAdmin.from('places').select('*');
-      if (statusParam) {
+      if (createdBy) {
+        q = q.eq('created_by', createdBy);
+      } else if (statusParam) {
         q = q.eq('status', statusParam);
       } else if (!includeAll) {
         q = q.eq('status', 'approved');
@@ -65,7 +68,9 @@ export async function GET(request: NextRequest) {
     ? store.getAllPlacesAdmin() 
     : store.filterPlaces({ query, categoryId });
 
-  if (statusParam) {
+  if (createdBy) {
+    places = store.getAllPlacesAdmin().filter((p: any) => p.created_by === createdBy);
+  } else if (statusParam) {
     places = places.filter((p: any) => p.status === statusParam);
   }
 
@@ -134,8 +139,36 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
           if (userRow?.id) {
             validCreatedBy = userRow.id;
+          } else {
+            // Check auth.admin to sync user into public.users
+            try {
+              const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(created_by);
+              if (authUserData?.user) {
+                const u = authUserData.user;
+                await supabaseAdmin.from('users').upsert({
+                  id: u.id,
+                  email: u.email || '',
+                  full_name: u.user_metadata?.full_name || u.email?.split('@')[0] || 'Sinh viên FTU',
+                  role: u.user_metadata?.role || 'student',
+                });
+                validCreatedBy = u.id;
+              } else {
+                validCreatedBy = created_by;
+              }
+            } catch (aErr) {
+              validCreatedBy = created_by;
+            }
           }
-        } catch (uErr) {}
+        } catch (uErr) {
+          validCreatedBy = created_by;
+        }
+      }
+
+      if (placeStatus === 'pending' && !validCreatedBy) {
+        return NextResponse.json(
+          { success: false, error: 'Thiếu thông tin người đề xuất (user ID không hợp lệ). Vui lòng đăng nhập lại!' },
+          { status: 400 }
+        );
       }
 
       // Validate category_id foreign key
@@ -228,6 +261,17 @@ export async function POST(request: NextRequest) {
               } catch (authErr) {}
             }
 
+            if (targetAdmins.length === 0) {
+              const defaultAdminId = 'a0000000-0000-0000-0000-000000000001';
+              await supabaseAdmin.from('users').upsert({
+                id: defaultAdminId,
+                email: ADMIN_EMAIL,
+                full_name: 'Ban Quản Trị FTU',
+                role: 'admin',
+              });
+              targetAdmins = [{ id: defaultAdminId }];
+            }
+
             if (targetAdmins.length > 0) {
               const notifRows = targetAdmins.map((adm) => ({
                 user_id: adm.id,
@@ -258,20 +302,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fallback if Supabase not configured
-    const newPlace = store.proposePlace({
-      ...body,
-      status: placeStatus,
-      lat: createdLat,
-      lng: createdLng,
-    });
-
+    // Return real error if Supabase persistence failed
     return NextResponse.json(
-      {
-        success: true,
-        place: newPlace,
-      },
-      { status: 201 }
+      { success: false, error: 'Cơ sở dữ liệu Supabase chưa được cấu hình hoặc không thể kết nối' },
+      { status: 500 }
     );
   } catch (e: any) {
     console.error('API create place exception:', e.message);
