@@ -53,17 +53,26 @@ export async function POST(request: NextRequest) {
       try {
         const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
         if (isFavorite) {
-          await supabaseAdmin
+          const { error } = await supabaseAdmin
             .from('favorites')
             .upsert({ user_id: userId, place_id: placeId });
+          if (error) {
+            console.error('Supabase favorites upsert error:', error.message);
+            return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+          }
         } else {
-          await supabaseAdmin
+          const { error } = await supabaseAdmin
             .from('favorites')
             .delete()
             .match({ user_id: userId, place_id: placeId });
+          if (error) {
+            console.error('Supabase favorites delete error:', error.message);
+            return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+          }
         }
       } catch (err: any) {
-        console.warn('POST /api/favorites notice:', err.message);
+        console.error('POST /api/favorites error:', err.message);
+        return NextResponse.json({ success: false, error: err.message }, { status: 500 });
       }
     }
 

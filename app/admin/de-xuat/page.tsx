@@ -18,6 +18,8 @@ import {
   Calendar,
   AlertCircle
 } from 'lucide-react';
+import { formatOpenDaysText } from '@/lib/utils/hours';
+import { getPriceRangesFromPlace } from '@/lib/utils/price';
 import MapSkeleton from '@/components/map/MapSkeleton';
 
 const StudyMap = dynamic(() => import('@/components/map/MapContainer'), {
@@ -288,6 +290,27 @@ export default function AdminProposalsPage() {
                       <span className="font-bold text-gray-800">Địa chỉ:</span>{' '}
                       <span className="text-gray-700">{activeDrawerPlace.address}</span>
                     </div>
+                  </div>
+                  {/* Category & Price */}
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <span className="px-2 py-0.5 rounded-md bg-white border border-border text-[11px] font-bold text-gray-700">
+                      {activeDrawerPlace.category?.name || 'Chưa phân loại'}
+                    </span>
+                    {getPriceRangesFromPlace(activeDrawerPlace).map((pr, idx) => (
+                      <span key={idx} className="px-2 py-0.5 rounded-md bg-burgundy-light text-burgundy text-[11px] font-semibold">
+                        {pr}
+                      </span>
+                    ))}
+                  </div>
+                  {/* Hours & Open days */}
+                  <div className="flex items-center gap-1.5 text-gray-600 text-[11px]">
+                    <Clock className="w-3.5 h-3.5 text-burgundy flex-shrink-0" />
+                    <span className="font-medium">{formatOpenDaysText(activeDrawerPlace.opening_hours)}</span>
+                    {!activeDrawerPlace.opening_hours?.is_24h && (
+                      <span className="text-gray-400">
+                        ({activeDrawerPlace.opening_hours?.monday?.open || '07:00'} - {activeDrawerPlace.opening_hours?.monday?.close || '23:00'})
+                      </span>
+                    )}
                   </div>
                   <div className="text-gray-500 text-[11px]">
                     Tọa độ: <span className="font-mono">{activeDrawerPlace.lat.toFixed(5)}, {activeDrawerPlace.lng.toFixed(5)}</span>

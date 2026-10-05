@@ -84,6 +84,28 @@ export async function POST(request: NextRequest) {
           { status: 404 }
         );
       }
+
+      if (isUuid(placeId) && userId && isUuid(userId)) {
+        const { error: chkErr } = await supabaseAdmin
+          .from('checkins')
+          .insert({
+            place_id: placeId,
+            user_id: userId,
+            level,
+            note: note ? note.slice(0, 100) : null,
+          });
+
+        if (chkErr) {
+          if (chkErr.message?.includes('CHECKIN_COOLDOWN') || chkErr.message?.includes('cooldown')) {
+            return NextResponse.json(
+              { success: false, message: 'CHECKIN_COOLDOWN: Bạn chỉ có thể check-in tại quán này sau 30 phút.' },
+              { status: 429 }
+            );
+          }
+          console.error('Supabase checkin insert error:', chkErr.message);
+          return NextResponse.json({ success: false, error: chkErr.message }, { status: 500 });
+        }
+      }
     }
 
     const result = store.addCheckin(placeId, level, note);

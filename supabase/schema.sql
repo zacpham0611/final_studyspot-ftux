@@ -99,11 +99,16 @@ CREATE TABLE IF NOT EXISTS public.checkins (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Trigger cooldown checkin 30 phút
+-- Trigger cooldown checkin 30 phút (bỏ qua cho Admin và độ đông theo giờ do Admin thiết lập)
 CREATE OR REPLACE FUNCTION check_checkin_cooldown()
 RETURNS TRIGGER AS $$
 DECLARE last_checkin TIMESTAMPTZ;
 BEGIN
+  -- Bỏ qua cooldown cho Admin hoặc bản ghi thiết lập độ đông theo giờ của Admin
+  IF NEW.note ILIKE 'Admin%' OR EXISTS (SELECT 1 FROM public.users WHERE id = NEW.user_id AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+
   SELECT created_at INTO last_checkin FROM public.checkins
   WHERE user_id = NEW.user_id AND place_id = NEW.place_id
   ORDER BY created_at DESC LIMIT 1;

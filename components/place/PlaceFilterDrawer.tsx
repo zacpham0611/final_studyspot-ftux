@@ -3,6 +3,7 @@
 import React from 'react';
 import { PlaceFilterOptions, Category, Amenity, CrowdStatus } from '@/lib/types/database';
 import { X, SlidersHorizontal, RotateCcw, Check } from 'lucide-react';
+import { PRICE_RANGE_OPTIONS } from '@/lib/utils/price';
 
 interface PlaceFilterDrawerProps {
   isOpen: boolean;
@@ -51,12 +52,21 @@ export function PlaceFilterDrawer({
     onChangeFilter({ ...filterOptions, priceLevels: next });
   };
 
+  const handlePriceRangeToggle = (val: string) => {
+    const current = filterOptions.priceRanges || [];
+    const next = current.includes(val)
+      ? current.filter((p) => p !== val)
+      : [...current, val];
+    onChangeFilter({ ...filterOptions, priceRanges: next });
+  };
+
   const handleReset = () => {
     onChangeFilter({
       query: '',
       categoryId: 'all',
       amenityIds: [],
       priceLevels: [],
+      priceRanges: [],
       openNow: false,
       openLate: false,
       crowdStatus: [],
@@ -207,32 +217,27 @@ export function PlaceFilterDrawer({
             </div>
           </div>
 
-          {/* Price Levels */}
+          {/* Price Ranges */}
           <div>
             <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2.5">
-              Mức giá
+              Khoảng giá
             </label>
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                { level: 1, label: '$', desc: '< 30k' },
-                { level: 2, label: '$$', desc: '30-50k' },
-                { level: 3, label: '$$$', desc: '50-70k' },
-                { level: 4, label: '$$$$', desc: '> 70k' },
-              ].map((p) => {
-                const isChecked = filterOptions.priceLevels?.includes(p.level);
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {PRICE_RANGE_OPTIONS.map((opt) => {
+                const isChecked = filterOptions.priceRanges?.includes(opt.value);
                 return (
                   <button
-                    key={p.level}
+                    key={opt.value}
                     type="button"
-                    onClick={() => handlePriceToggle(p.level)}
-                    className={`p-2 rounded-xl border text-center transition-colors ${
+                    onClick={() => handlePriceRangeToggle(opt.value)}
+                    className={`p-2.5 rounded-xl border text-left transition-colors ${
                       isChecked
-                        ? 'border-burgundy bg-burgundy-light text-burgundy font-bold'
+                        ? 'border-burgundy bg-burgundy-light text-burgundy font-bold shadow-xs'
                         : 'border-border text-gray-700 hover:bg-slate-50'
                     }`}
                   >
-                    <div className="font-mono text-sm font-bold">{p.label}</div>
-                    <div className="text-[10px] text-gray-500">{p.desc}</div>
+                    <div className="text-xs font-bold">{opt.label}</div>
+                    {opt.subLabel && <div className="text-[10px] text-gray-500">{opt.subLabel}</div>}
                   </button>
                 );
               })}

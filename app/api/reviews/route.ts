@@ -102,7 +102,8 @@ export async function POST(request: NextRequest) {
               { status: 409 }
             );
           }
-          console.warn('Supabase review insert error:', error.message);
+          console.error('Supabase review insert error:', error.message);
+          return NextResponse.json({ success: false, error: error.message }, { status: 500 });
         } else if (data) {
           createdReview = data;
         }

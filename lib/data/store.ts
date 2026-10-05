@@ -25,6 +25,7 @@ import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { calculateDistance, formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { getOpeningStatus } from '@/lib/utils/hours';
 import { matchesSearch } from '@/lib/utils/text';
+import { PRICE_RANGE_OPTIONS, getPriceRangesFromPlace } from '@/lib/utils/price';
 import { supabase } from '@/lib/supabase/client';
 
 export const isUuid = (str?: string | null): boolean => {
@@ -312,14 +313,18 @@ class StudySpotStore {
         // REPLACE this.places completely with Supabase data, filtering out any deleted places
         this.places = rawPlaces
           .filter((dp: any) => !this.deletedPlaceIds.has(dp.id))
-          .map((dp: any) => ({
-            ...dp,
-            opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours),
-            price_level: dp.price_level || 2,
-            images: dp.images || [],
-            view_count: dp.view_count || 0,
-            amenities: dp.amenities || [],
-          }));
+          .map((dp: any) => {
+            const parsedHours = typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours);
+            return {
+              ...dp,
+              opening_hours: parsedHours,
+              price_ranges: dp.price_ranges || parsedHours?.price_ranges || [],
+              price_level: dp.price_level || 2,
+              images: dp.images || [],
+              view_count: dp.view_count || 0,
+              amenities: dp.amenities || [],
+            };
+          });
 
         // Immediately overwrite localStorage so stale deleted places are completely purged
         if (typeof window !== 'undefined') {
@@ -483,6 +488,21 @@ class StudySpotStore {
         const placeAmenityIds = p.amenities?.map((a) => a.id) || [];
         const hasAll = options.amenityIds.every((id) => placeAmenityIds.includes(id));
         if (!hasAll) return false;
+      }
+
+      if (options.priceRanges && options.priceRanges.length > 0) {
+        const placeRanges = getPriceRangesFromPlace(p);
+        if (placeRanges.length > 0) {
+          const hasMatch = options.priceRanges.some((r) => placeRanges.includes(r));
+          if (!hasMatch) return false;
+        } else {
+          // Backward compatibility for legacy places with only price_level:
+          const selectedLevels = options.priceRanges.map((r) => {
+            const found = PRICE_RANGE_OPTIONS.find((opt) => opt.value === r);
+            return found ? found.level : 2;
+          });
+          if (!selectedLevels.includes(p.price_level)) return false;
+        }
       }
 
       if (options.priceLevels && options.priceLevels.length > 0) {
@@ -791,7 +811,10 @@ class StudySpotStore {
       };
     });
 
-    this.checkins = this.checkins.filter((c) => c.place_id !== placeId).concat(newCheckins);
+    // Replace previous admin checkins for this place, keeping user checkins intact
+    this.checkins = this.checkins
+      .filter((c) => !(c.place_id === placeId && (c.id?.startsWith('chk-admin-') || c.note?.startsWith('Admin'))))
+      .concat(newCheckins);
     this.persist();
     this.notify();
   }

@@ -43,6 +43,7 @@ function HomePageContent() {
     categoryId: 'all',
     amenityIds: [],
     priceLevels: [],
+    priceRanges: [],
     openNow: false,
     openLate: false,
     crowdStatus: [],

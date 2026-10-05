@@ -10,6 +10,8 @@ import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle, Check, Compass } f
 import { useAuth } from '@/components/auth/AuthContext';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { Category, Amenity } from '@/lib/types/database';
+import { WEEK_DAYS, ALL_DAY_KEYS } from '@/lib/utils/hours';
+import { PRICE_RANGE_OPTIONS, calculatePriceLevel } from '@/lib/utils/price';
 
 const MapPinPicker = dynamic(() => import('@/components/map/MapPinPicker'), {
   ssr: false,
@@ -32,9 +34,11 @@ function SuggestPlaceContent() {
   const [lngInput, setLngInput] = useState(FTU_COORDINATES.lng.toString());
   const [coordError, setCoordError] = useState<string | null>(null);
   const [description, setDescription] = useState('');
+  const [is24h, setIs24h] = useState(false);
+  const [openDays, setOpenDays] = useState<string[]>([...ALL_DAY_KEYS]);
   const [openTime, setOpenTime] = useState('07:30');
   const [closeTime, setCloseTime] = useState('22:30');
-  const [priceLevel, setPriceLevel] = useState(2);
+  const [selectedPriceRanges, setSelectedPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
   const [selectedAmenityIds, setSelectedAmenityIds] = useState<number[]>([1, 2, 5]);
   const [imageUrl, setImageUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -256,6 +260,35 @@ function SuggestPlaceContent() {
     );
   };
 
+  const handleToggleDay = (dayKey: string) => {
+    if (is24h) return;
+    setOpenDays((prev) => {
+      if (prev.includes(dayKey)) {
+        if (prev.length === 1) {
+          showToast('Địa điểm cần mở cửa ít nhất 1 ngày trong tuần', 'error');
+          return prev;
+        }
+        return prev.filter((d) => d !== dayKey);
+      } else {
+        return [...prev, dayKey];
+      }
+    });
+  };
+
+  const handlePriceRangeToggle = (val: string) => {
+    setSelectedPriceRanges((prev) => {
+      if (prev.includes(val)) {
+        if (prev.length === 1) {
+          showToast('Vui lòng chọn ít nhất 1 khoảng giá', 'error');
+          return prev;
+        }
+        return prev.filter((r) => r !== val);
+      } else {
+        return [...prev, val];
+      }
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !address.trim()) {
@@ -288,6 +321,8 @@ function SuggestPlaceContent() {
     const targetCatId = Number(selectedCategory.id);
     const targetCatName = selectedCategory.name;
 
+    const calculatedPriceLevel = calculatePriceLevel(selectedPriceRanges);
+
     const placePayload = {
       name: name.trim(),
       category_id: targetCatId,
@@ -297,15 +332,19 @@ function SuggestPlaceContent() {
       lng: finalLng,
       description: description.trim(),
       opening_hours: {
-        monday: { open: openTime, close: closeTime },
-        tuesday: { open: openTime, close: closeTime },
-        wednesday: { open: openTime, close: closeTime },
-        thursday: { open: openTime, close: closeTime },
-        friday: { open: openTime, close: closeTime },
-        saturday: { open: openTime, close: closeTime },
-        sunday: { open: openTime, close: closeTime },
+        is_24h: is24h,
+        open_days: openDays,
+        price_ranges: selectedPriceRanges,
+        monday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('monday') },
+        tuesday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('tuesday') },
+        wednesday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('wednesday') },
+        thursday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('thursday') },
+        friday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('friday') },
+        saturday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('saturday') },
+        sunday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('sunday') },
       },
-      price_level: priceLevel,
+      price_level: calculatedPriceLevel,
+      price_ranges: selectedPriceRanges,
       images: imageUrl.trim()
         ? [imageUrl.trim()]
         : ['https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=1000&q=80'],
@@ -647,39 +686,107 @@ function SuggestPlaceContent() {
         </div>
 
         {/* Hours & Price */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="text-xs font-bold text-gray-700 block mb-1">Giờ mở cửa</label>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
             <input
-              type="time"
-              value={openTime}
-              onChange={(e) => setOpenTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy"
+              type="checkbox"
+              id="de-xuat-is-24h"
+              checked={is24h}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIs24h(checked);
+                if (checked) {
+                  setOpenDays([...ALL_DAY_KEYS]);
+                }
+              }}
+              className="w-4 h-4 text-burgundy rounded border-gray-300 focus:ring-burgundy cursor-pointer"
             />
+            <label htmlFor="de-xuat-is-24h" className="text-xs font-bold text-gray-700 cursor-pointer select-none">
+              Mở cửa 24/7 (Phục vụ cả ngày & đêm)
+            </label>
           </div>
 
-          <div>
-            <label className="text-xs font-bold text-gray-700 block mb-1">Giờ đóng cửa</label>
-            <input
-              type="time"
-              value={closeTime}
-              onChange={(e) => setCloseTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy"
-            />
+          {/* Opening Days Multi-select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-700 block">
+              Mở cửa vào:
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEK_DAYS.map((d) => {
+                const isSelected = openDays.includes(d.key);
+                return (
+                  <button
+                    key={d.key}
+                    type="button"
+                    disabled={is24h}
+                    onClick={() => handleToggleDay(d.key)}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                      isSelected
+                        ? 'border-burgundy bg-burgundy-light text-burgundy shadow-xs'
+                        : 'border-border text-gray-600 hover:bg-slate-50'
+                    } ${is24h ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div>
-            <label className="text-xs font-bold text-gray-700 block mb-1">Mức giá</label>
-            <select
-              value={priceLevel}
-              onChange={(e) => setPriceLevel(Number(e.target.value))}
-              className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy bg-white"
-            >
-              <option value={1}>$ (&lt; 30.000đ - Giá sinh viên)</option>
-              <option value={2}>$$ (30.000đ - 50.000đ)</option>
-              <option value={3}>$$$ (50.000đ - 70.000đ)</option>
-              <option value={4}>$$$$ (&gt; 70.000đ)</option>
-            </select>
+          {/* Daily hours */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Giờ mở cửa</label>
+              <input
+                type="time"
+                disabled={is24h}
+                value={is24h ? '00:00' : openTime}
+                onChange={(e) => setOpenTime(e.target.value)}
+                className={`w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy ${
+                  is24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''
+                }`}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Giờ đóng cửa</label>
+              <input
+                type="time"
+                disabled={is24h}
+                value={is24h ? '23:59' : closeTime}
+                onChange={(e) => setCloseTime(e.target.value)}
+                className={`w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy ${
+                  is24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Price Range Multi-select */}
+          <div className="space-y-1.5 pt-1">
+            <label className="text-xs font-bold text-gray-700 block">
+              Mức giá <span className="text-gray-400 font-normal">(có thể chọn nhiều khoảng giá)</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {PRICE_RANGE_OPTIONS.map((opt) => {
+                const checked = selectedPriceRanges.includes(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => handlePriceRangeToggle(opt.value)}
+                    className={`p-2.5 rounded-xl border text-xs font-medium text-left transition-colors ${
+                      checked
+                        ? 'border-burgundy bg-burgundy-light text-burgundy font-bold shadow-xs'
+                        : 'border-border text-gray-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="font-bold mr-1">{checked ? '✓' : '+'}</span>
+                    <span>{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 

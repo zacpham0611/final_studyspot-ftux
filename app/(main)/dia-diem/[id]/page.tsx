@@ -16,6 +16,8 @@ import { useToast } from '@/components/common/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase/client';
 import { formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
+import { formatOpenDaysText, getOpenDaysFromHours } from '@/lib/utils/hours';
+import { getPriceRangesFromPlace } from '@/lib/utils/price';
 import { 
   Star, 
   MapPin, 
@@ -280,10 +282,9 @@ export default function PlaceDetailPage() {
 
   const hourlyCrowdData = store.getHourlyCrowdData(place.id, checkins);
   const priceSymbol = '$'.repeat(place.price_level || 2);
-  const priceText =
-    place.price_level === 1 ? '< 30.000đ (Giá sinh viên)' :
-    place.price_level === 2 ? '30.000đ - 50.000đ' :
-    place.price_level === 3 ? '50.000đ - 70.000đ' : '> 70.000đ';
+  const placePriceRanges = getPriceRangesFromPlace(place);
+  const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
+  const openDaysSummary = formatOpenDaysText(place.opening_hours);
 
   return (
     <motion.div
@@ -703,40 +704,77 @@ export default function PlaceDetailPage() {
               <Clock className="w-4 h-4 text-burgundy" /> Giờ mở cửa & Mức giá
             </h3>
 
-            {/* Price Level */}
-            <div className="p-3 rounded-xl bg-slate-50 border border-border">
-              <div className="text-xs text-gray-500">Mức giá trung bình:</div>
-              <div className="text-sm font-bold text-gray-900 mt-0.5">
-                <span className="font-mono text-burgundy mr-1.5">{priceSymbol}</span>
-                {priceText}
+            {/* Price Level / Ranges */}
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-border space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-700">Mức giá / Khoảng giá:</span>
+                <span className="font-mono text-xs font-bold text-burgundy">{priceSymbol}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {placePriceRanges.length > 0 ? (
+                  placePriceRanges.map((range, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-burgundy-light text-burgundy border border-burgundy/10 shadow-2xs"
+                    >
+                      {range}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs text-gray-500 font-medium">
+                    {priceSymbol} ({place.price_level === 1 ? '< 30.000đ (Giá sinh viên)' : place.price_level === 2 ? '30.000đ – 50.000đ' : place.price_level === 3 ? '50.000đ – 70.000đ' : '> 70.000đ'})
+                  </span>
+                )}
               </div>
             </div>
 
             {/* Opening hours table */}
-            <div className="space-y-1.5 text-xs">
-              <div className="font-bold text-gray-700 mb-1">Lịch hoạt động trong tuần:</div>
-              {[
-                { day: 'Thứ Hai', schedule: place.opening_hours?.monday },
-                { day: 'Thứ Ba', schedule: place.opening_hours?.tuesday },
-                { day: 'Thứ Tư', schedule: place.opening_hours?.wednesday },
-                { day: 'Thứ Năm', schedule: place.opening_hours?.thursday },
-                { day: 'Thứ Sáu', schedule: place.opening_hours?.friday },
-                { day: 'Thứ Bảy', schedule: place.opening_hours?.saturday },
-                { day: 'Chủ Nhật', schedule: place.opening_hours?.sunday },
-              ].map((item, idx) => (
-                <div key={idx} className="flex justify-between py-1 border-b border-gray-100 last:border-none">
-                  <span className="text-gray-600">{item.day}</span>
-                  <span className="font-semibold text-gray-900">
-                    {place.opening_hours?.is_24h
-                      ? 'Cả ngày (24/7)'
-                      : item.schedule?.is_closed
-                      ? 'Nghỉ'
-                      : item.schedule?.open && item.schedule?.close
-                      ? `${item.schedule.open} - ${item.schedule.close}`
-                      : '07:00 - 23:00'}
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-gray-700">Lịch hoạt động:</span>
+                <span className="text-[11px] font-semibold text-burgundy bg-burgundy-light px-2.5 py-0.5 rounded-full">
+                  {openDaysSummary}
+                </span>
+              </div>
+              {place.opening_hours?.is_24h ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-emerald-800">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className="font-bold text-sm">Mở cửa 24/7</span>
+                  </div>
+                  <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full">
+                    Cả ngày & đêm
                   </span>
                 </div>
-              ))}
+              ) : (
+                [
+                  { key: 'monday', day: 'Thứ Hai', schedule: place.opening_hours?.monday },
+                  { key: 'tuesday', day: 'Thứ Ba', schedule: place.opening_hours?.tuesday },
+                  { key: 'wednesday', day: 'Thứ Tư', schedule: place.opening_hours?.wednesday },
+                  { key: 'thursday', day: 'Thứ Năm', schedule: place.opening_hours?.thursday },
+                  { key: 'friday', day: 'Thứ Sáu', schedule: place.opening_hours?.friday },
+                  { key: 'saturday', day: 'Thứ Bảy', schedule: place.opening_hours?.saturday },
+                  { key: 'sunday', day: 'Chủ Nhật', schedule: place.opening_hours?.sunday },
+                ].map((item, idx) => {
+                  const isDayClosed = !activeOpenDays.includes(item.key) || item.schedule?.is_closed;
+                  return (
+                    <div key={idx} className="flex justify-between py-1 border-b border-gray-100 last:border-none">
+                      <span className="text-gray-600">{item.day}</span>
+                      {isDayClosed ? (
+                        <span className="font-semibold text-rose-500 bg-rose-50 px-2 py-0.5 rounded text-[11px]">
+                          Nghỉ
+                        </span>
+                      ) : (
+                        <span className="font-semibold text-gray-900">
+                          {item.schedule?.open && item.schedule?.close
+                            ? `${item.schedule.open} - ${item.schedule.close}`
+                            : '07:00 - 23:00'}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 

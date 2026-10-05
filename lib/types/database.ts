@@ -44,6 +44,8 @@ export interface OpeningHours {
   saturday?: DailyHours;
   sunday?: DailyHours;
   is_24h?: boolean;
+  open_days?: string[];
+  price_ranges?: string[];
 }
 
 export interface Place {
@@ -57,6 +59,7 @@ export interface Place {
   description: string;
   opening_hours: OpeningHours;
   price_level: number; // 1: <30k, 2: 30k-50k, 3: 50k-70k, 4: >70k
+  price_ranges?: string[];
   images: string[];
   status: PlaceStatus;
   reject_reason?: string | null;
@@ -148,6 +151,7 @@ export interface PlaceFilterOptions {
   categoryId?: number | 'all';
   amenityIds?: number[];
   priceLevels?: number[];
+  priceRanges?: string[];
   openNow?: boolean;
   openLate?: boolean;
   crowdStatus?: CrowdStatus[];

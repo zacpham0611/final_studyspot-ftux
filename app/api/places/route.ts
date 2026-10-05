@@ -37,13 +37,17 @@ export async function GET(request: NextRequest) {
       q = q.order('created_at', { ascending: false });
       const { data, error } = await q;
       if (!error && data) {
-        let places = data.map((dp: any) => ({
-          ...dp,
-          opening_hours: typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : dp.opening_hours,
-          price_level: dp.price_level || 2,
-          images: dp.images || [],
-          view_count: dp.view_count || 0,
-        }));
+        let places = data.map((dp: any) => {
+          const parsedHours = typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : dp.opening_hours;
+          return {
+            ...dp,
+            opening_hours: parsedHours,
+            price_ranges: dp.price_ranges || parsedHours?.price_ranges || [],
+            price_level: dp.price_level || 2,
+            images: dp.images || [],
+            view_count: dp.view_count || 0,
+          };
+        });
 
         if (query) {
           const lowerQ = query.toLowerCase();
@@ -343,10 +347,11 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Also save to in-memory store
+        const parsedHours = typeof inserted.opening_hours === 'string' ? JSON.parse(inserted.opening_hours) : inserted.opening_hours;
         store.savePlace({
           ...inserted,
-          opening_hours: typeof inserted.opening_hours === 'string' ? JSON.parse(inserted.opening_hours) : inserted.opening_hours,
+          opening_hours: parsedHours,
+          price_ranges: inserted.price_ranges || parsedHours?.price_ranges || [],
         });
 
         return NextResponse.json(
