@@ -67,7 +67,7 @@ function SuggestPlaceContent() {
       const cats = store.getCategories();
       if (cats && cats.length > 0) {
         setCategories(cats);
-        setCategoryId((prev) => (cats.some((c) => c.id === prev) ? prev : cats[0].id));
+        setCategoryId((prev) => (cats.some((c) => Number(c.id) === Number(prev)) ? prev : Number(cats[0].id)));
       }
       const ams = store.getAmenities();
       if (ams && ams.length > 0) {
@@ -76,6 +76,15 @@ function SuggestPlaceContent() {
     };
 
     updateStoreData();
+    fetch('/api/categories', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && Array.isArray(data.categories) && data.categories.length > 0) {
+          setCategories(data.categories);
+          setCategoryId((prev) => (data.categories.some((c: Category) => Number(c.id) === Number(prev)) ? prev : Number(data.categories[0].id)));
+        }
+      })
+      .catch(() => {});
     store.loadFromSupabase().then(updateStoreData);
     const unsub = store.subscribe(updateStoreData);
     return () => unsub();
@@ -273,8 +282,8 @@ function SuggestPlaceContent() {
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
     const activeCategories = categories.length > 0 ? categories : store.getCategories();
-    const selectedCategory = activeCategories.find((c) => c.id === Number(categoryId)) || activeCategories[0];
-    const targetCatId = selectedCategory ? selectedCategory.id : Number(categoryId);
+    const selectedCategory = activeCategories.find((c) => Number(c.id) === Number(categoryId)) || activeCategories[0];
+    const targetCatId = selectedCategory ? Number(selectedCategory.id) : Number(categoryId);
     const targetCatName = selectedCategory?.name;
 
     const placePayload = {

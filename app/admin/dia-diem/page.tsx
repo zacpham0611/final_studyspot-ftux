@@ -66,12 +66,21 @@ export default function AdminPlacesPage() {
     const cats = store.getCategories();
     if (cats && cats.length > 0) {
       setCategories(cats);
-      setNewCatId((prev) => (cats.some((c) => c.id === prev) ? prev : cats[0].id));
+      setNewCatId((prev) => (cats.some((c) => Number(c.id) === Number(prev)) ? prev : Number(cats[0].id)));
     }
   };
 
   useEffect(() => {
     loadData();
+    fetch('/api/categories', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && Array.isArray(data.categories) && data.categories.length > 0) {
+          setCategories(data.categories);
+          setNewCatId((prev) => (data.categories.some((c: Category) => Number(c.id) === Number(prev)) ? prev : Number(data.categories[0].id)));
+        }
+      })
+      .catch(() => {});
     store.loadFromSupabase().then(loadData);
     const unsub = store.subscribe(loadData);
     return () => unsub();
@@ -109,8 +118,8 @@ export default function AdminPlacesPage() {
     setEditModalPlace(place);
     setEditName(place.name);
     const activeCategories = categories.length > 0 ? categories : store.getCategories();
-    const foundCat = activeCategories.find((c) => c.id === place.category_id);
-    setEditCatId(foundCat ? foundCat.id : (activeCategories[0]?.id || 1));
+    const foundCat = activeCategories.find((c) => Number(c.id) === Number(place.category_id));
+    setEditCatId(foundCat ? Number(foundCat.id) : (Number(activeCategories[0]?.id) || 1));
     setEditAddress(place.address);
     setEditLat(place.lat);
     setEditLng(place.lng);
@@ -334,8 +343,8 @@ export default function AdminPlacesPage() {
         <button
           onClick={() => {
             const cats = categories.length > 0 ? categories : store.getCategories();
-            if (cats.length > 0 && !cats.some((c) => c.id === newCatId)) {
-              setNewCatId(cats[0].id);
+            if (cats.length > 0 && !cats.some((c) => Number(c.id) === Number(newCatId))) {
+              setNewCatId(Number(cats[0].id));
             }
             setIsAddPlaceOpen(true);
           }}
