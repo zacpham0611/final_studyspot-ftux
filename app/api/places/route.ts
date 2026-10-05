@@ -86,6 +86,78 @@ const isUuid = (str?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 };
 
+const normalizeCategoryText = (str?: string | null): string => {
+  if (!str) return '';
+  return str.normalize('NFC').toLowerCase().trim();
+};
+
+const unaccentCategoryText = (str?: string | null): string => {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, (m) => (m === 'đ' ? 'd' : 'D'))
+    .toLowerCase()
+    .trim();
+};
+
+function resolveMatchingCategoryId(
+  dbCategories: Array<{ id: number; name: string }>,
+  submittedId: any,
+  submittedName?: string | null
+): number | null {
+  if (!dbCategories || dbCategories.length === 0) return null;
+
+  const parsedId = Number(submittedId);
+
+  // 1. Direct ID match in public.categories
+  if (!isNaN(parsedId)) {
+    const directMatch = dbCategories.find((c) => c.id === parsedId);
+    if (directMatch) return directMatch.id;
+  }
+
+  // Candidate names from submittedName and mockData
+  const mockCat = !isNaN(parsedId) ? INITIAL_CATEGORIES.find((m) => m.id === parsedId) : null;
+  const candidateNames = [
+    submittedName?.trim(),
+    mockCat?.name?.trim(),
+  ].filter(Boolean) as string[];
+
+  // 2. Exact match (NFC normalized, case-insensitive)
+  for (const cand of candidateNames) {
+    const normCand = normalizeCategoryText(cand);
+    const match = dbCategories.find((c) => normalizeCategoryText(c.name) === normCand);
+    if (match) return match.id;
+  }
+
+  // 3. Accent-insensitive match
+  for (const cand of candidateNames) {
+    const unaccentCand = unaccentCategoryText(cand);
+    const match = dbCategories.find((c) => unaccentCategoryText(c.name) === unaccentCand);
+    if (match) return match.id;
+  }
+
+  // 4. Substring / Keyword inclusion match
+  for (const cand of candidateNames) {
+    const unaccentCand = unaccentCategoryText(cand);
+    if (unaccentCand.length >= 3) {
+      const match = dbCategories.find((c) => {
+        const unaccentDb = unaccentCategoryText(c.name);
+        return unaccentDb.includes(unaccentCand) || unaccentCand.includes(unaccentDb);
+      });
+      if (match) return match.id;
+    }
+  }
+
+  // 5. Ordinal position match for mock 1-based IDs if candidate name exists
+  if (!isNaN(parsedId) && parsedId >= 1 && parsedId <= dbCategories.length && candidateNames.length > 0) {
+    const idxCategory = dbCategories[parsedId - 1];
+    if (idxCategory) return idxCategory.id;
+  }
+
+  return null;
+}
+
 const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
 
 export async function POST(request: NextRequest) {
@@ -175,41 +247,20 @@ export async function POST(request: NextRequest) {
       // Validate category_id foreign key against real Supabase public.categories
       let validCatId: number | null = null;
       try {
-        const { data: dbCategories } = await supabaseAdmin
+        const { data: dbCategories, error: catError } = await supabaseAdmin
           .from('categories')
           .select('id, name')
           .order('id', { ascending: true });
 
+        if (catError) {
+          console.error('Supabase public.categories query error:', catError.message);
+        }
+
         if (dbCategories && dbCategories.length > 0) {
-          const parsedId = Number(category_id);
-          // 1. Direct match by real database ID
-          const directMatch = !isNaN(parsedId) ? dbCategories.find((c) => c.id === parsedId) : null;
-          if (directMatch) {
-            validCatId = directMatch.id;
-          }
-
-          // 2. If not matched by direct ID, match by category name or mock identifier
-          if (!validCatId) {
-            const mockCat = INITIAL_CATEGORIES.find((m) => m.id === parsedId);
-            const targetName = (body.category_name || mockCat?.name || '').trim().toLowerCase();
-
-            if (targetName) {
-              const nameMatch = dbCategories.find(
-                (c) => c.name.trim().toLowerCase() === targetName
-              );
-              if (nameMatch) {
-                validCatId = nameMatch.id;
-              }
-            }
-          }
-
-          // 3. Fallback: if user didn't specify or invalid, use the first real category from Supabase
-          if (!validCatId && !category_id) {
-            validCatId = dbCategories[0].id;
-          }
+          validCatId = resolveMatchingCategoryId(dbCategories, category_id, body.category_name);
         }
       } catch (cErr: any) {
-        console.warn('Category resolution error:', cErr.message);
+        console.warn('Category resolution exception:', cErr.message);
       }
 
       if (!validCatId) {
@@ -413,30 +464,23 @@ export async function PATCH(request: NextRequest) {
 
         if (category_id !== undefined) {
           try {
-            const { data: dbCategories } = await supabaseAdmin
+            const { data: dbCategories, error: catError } = await supabaseAdmin
               .from('categories')
-              .select('id, name');
+              .select('id, name')
+              .order('id', { ascending: true });
+
+            if (catError) {
+              console.error('Supabase public.categories query error in PATCH:', catError.message);
+            }
 
             if (dbCategories && dbCategories.length > 0) {
-              const parsedId = Number(category_id);
-              const directMatch = !isNaN(parsedId) ? dbCategories.find((c) => c.id === parsedId) : null;
-              if (directMatch) {
-                updateData.category_id = directMatch.id;
-              } else {
-                const mockCat = INITIAL_CATEGORIES.find((m) => m.id === parsedId);
-                const targetName = (body.category_name || mockCat?.name || '').trim().toLowerCase();
-                if (targetName) {
-                  const nameMatch = dbCategories.find(
-                    (c) => c.name.trim().toLowerCase() === targetName
-                  );
-                  if (nameMatch) {
-                    updateData.category_id = nameMatch.id;
-                  }
-                }
+              const matchedId = resolveMatchingCategoryId(dbCategories, category_id, body.category_name);
+              if (matchedId) {
+                updateData.category_id = matchedId;
               }
             }
           } catch (cErr: any) {
-            console.warn('Category resolution error in PATCH:', cErr.message);
+            console.warn('Category resolution exception in PATCH:', cErr.message);
           }
         }
 

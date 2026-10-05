@@ -99,6 +99,14 @@ class StudySpotStore {
         const storedUsers = localStorage.getItem('studyspot_users_v2');
         if (storedUsers) this.users = JSON.parse(storedUsers);
 
+        const storedCategories = localStorage.getItem('studyspot_categories_v2');
+        if (storedCategories) {
+          try {
+            const parsed = JSON.parse(storedCategories);
+            if (Array.isArray(parsed) && parsed.length > 0) this.categories = parsed;
+          } catch (e) {}
+        }
+
         const storedHelpful = localStorage.getItem('studyspot_helpful_v2');
         if (storedHelpful) this.helpfulVotes = new Set(JSON.parse(storedHelpful));
 
@@ -130,6 +138,7 @@ class StudySpotStore {
       try {
         localStorage.setItem('studyspot_deleted_places_v2', JSON.stringify(Array.from(this.deletedPlaceIds)));
         localStorage.setItem('studyspot_places_v2', JSON.stringify(this.places));
+        localStorage.setItem('studyspot_categories_v2', JSON.stringify(this.categories));
         localStorage.setItem('studyspot_checkins_v2', JSON.stringify(this.checkins));
         localStorage.setItem('studyspot_reviews_v2', JSON.stringify(this.reviews));
         localStorage.setItem('studyspot_notifs_v2', JSON.stringify(this.notifications));
@@ -358,8 +367,23 @@ class StudySpotStore {
         this.notifications = supaNotifs;
       }
 
-      if (categoriesRes.data && categoriesRes.data.length > 0) {
-        this.categories = categoriesRes.data;
+      let supaCategories: Category[] | null = null;
+      try {
+        const catRes = await fetch('/api/categories', { cache: 'no-store' });
+        if (catRes.ok) {
+          const catJson = await catRes.json();
+          if (Array.isArray(catJson.categories) && catJson.categories.length > 0) {
+            supaCategories = catJson.categories;
+          }
+        }
+      } catch (cErr) {}
+
+      if (!supaCategories && categoriesRes.data && categoriesRes.data.length > 0) {
+        supaCategories = categoriesRes.data;
+      }
+
+      if (supaCategories !== null && supaCategories.length > 0) {
+        this.categories = supaCategories;
       }
 
       if (amenitiesRes.data && amenitiesRes.data.length > 0) {

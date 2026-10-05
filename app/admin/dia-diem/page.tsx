@@ -24,14 +24,17 @@ import Link from 'next/link';
 export default function AdminPlacesPage() {
   const { showToast } = useToast();
   const [places, setPlaces] = useState<Place[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<Category[]>(() => store.getCategories());
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<number | 'all'>('all');
 
   // Modal State for Edit Place
   const [editModalPlace, setEditModalPlace] = useState<Place | null>(null);
   const [editName, setEditName] = useState('');
-  const [editCatId, setEditCatId] = useState(1);
+  const [editCatId, setEditCatId] = useState<number>(() => {
+    const cats = store.getCategories();
+    return cats.length > 0 ? cats[0].id : 1;
+  });
   const [editAddress, setEditAddress] = useState('');
   const [editLat, setEditLat] = useState(21.0245);
   const [editLng, setEditLng] = useState(105.8046);
@@ -47,7 +50,10 @@ export default function AdminPlacesPage() {
   // Modal State for Add New Place
   const [isAddPlaceOpen, setIsAddPlaceOpen] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newCatId, setNewCatId] = useState(1);
+  const [newCatId, setNewCatId] = useState<number>(() => {
+    const cats = store.getCategories();
+    return cats.length > 0 ? cats[0].id : 1;
+  });
   const [newAddress, setNewAddress] = useState('');
   const [newLat, setNewLat] = useState(21.0245);
   const [newLng, setNewLng] = useState(105.8046);
@@ -57,12 +63,18 @@ export default function AdminPlacesPage() {
 
   const loadData = () => {
     setPlaces(store.getAllPlacesAdmin());
-    setCategories(store.getCategories());
+    const cats = store.getCategories();
+    if (cats && cats.length > 0) {
+      setCategories(cats);
+      setNewCatId((prev) => (cats.some((c) => c.id === prev) ? prev : cats[0].id));
+    }
   };
 
   useEffect(() => {
     loadData();
     store.loadFromSupabase().then(loadData);
+    const unsub = store.subscribe(loadData);
+    return () => unsub();
   }, []);
 
   const handleToggleHide = async (place: Place) => {
@@ -96,7 +108,9 @@ export default function AdminPlacesPage() {
   const openEditModal = (place: Place) => {
     setEditModalPlace(place);
     setEditName(place.name);
-    setEditCatId(place.category_id);
+    const activeCategories = categories.length > 0 ? categories : store.getCategories();
+    const foundCat = activeCategories.find((c) => c.id === place.category_id);
+    setEditCatId(foundCat ? foundCat.id : (activeCategories[0]?.id || 1));
     setEditAddress(place.address);
     setEditLat(place.lat);
     setEditLng(place.lng);
@@ -111,11 +125,15 @@ export default function AdminPlacesPage() {
       return;
     }
 
-    const selectedCat = categories.find((c) => c.id === Number(editCatId));
+    const activeCategories = categories.length > 0 ? categories : store.getCategories();
+    const selectedCat = activeCategories.find((c) => c.id === Number(editCatId)) || activeCategories[0];
+    const targetCatId = selectedCat ? selectedCat.id : Number(editCatId);
+    const targetCatName = selectedCat?.name;
+
     const editPayload: any = {
       name: editName.trim(),
-      category_id: editCatId,
-      category_name: selectedCat?.name,
+      category_id: targetCatId,
+      category_name: targetCatName,
       address: editAddress.trim(),
       lat: editLat,
       lng: editLng,
@@ -244,11 +262,15 @@ export default function AdminPlacesPage() {
       return;
     }
 
-    const selectedCat = categories.find((c) => c.id === Number(newCatId));
+    const activeCategories = categories.length > 0 ? categories : store.getCategories();
+    const selectedCat = activeCategories.find((c) => c.id === Number(newCatId)) || activeCategories[0];
+    const targetCatId = selectedCat ? selectedCat.id : Number(newCatId);
+    const targetCatName = selectedCat?.name;
+
     const payload = {
       name: newName.trim(),
-      category_id: Number(newCatId),
-      category_name: selectedCat?.name,
+      category_id: targetCatId,
+      category_name: targetCatName,
       address: newAddress.trim(),
       lat: Number(newLat),
       lng: Number(newLng),
@@ -310,7 +332,13 @@ export default function AdminPlacesPage() {
           </p>
         </div>
         <button
-          onClick={() => setIsAddPlaceOpen(true)}
+          onClick={() => {
+            const cats = categories.length > 0 ? categories : store.getCategories();
+            if (cats.length > 0 && !cats.some((c) => c.id === newCatId)) {
+              setNewCatId(cats[0].id);
+            }
+            setIsAddPlaceOpen(true);
+          }}
           className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover shadow-sm"
         >
           <Plus className="w-4 h-4" /> + Thêm địa điểm mới

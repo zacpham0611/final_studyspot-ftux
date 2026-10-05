@@ -272,12 +272,15 @@ function SuggestPlaceContent() {
     setSubmitting(true);
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
-    const selectedCategory = categories.find((c) => c.id === categoryId);
+    const activeCategories = categories.length > 0 ? categories : store.getCategories();
+    const selectedCategory = activeCategories.find((c) => c.id === Number(categoryId)) || activeCategories[0];
+    const targetCatId = selectedCategory ? selectedCategory.id : Number(categoryId);
+    const targetCatName = selectedCategory?.name;
 
     const placePayload = {
       name: name.trim(),
-      category_id: categoryId,
-      category_name: selectedCategory?.name,
+      category_id: targetCatId,
+      category_name: targetCatName,
       address: address.trim(),
       lat: finalLat,
       lng: finalLng,
