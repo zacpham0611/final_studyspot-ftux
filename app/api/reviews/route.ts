@@ -133,3 +133,76 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: e.message }, { status: 500 });
   }
 }
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { reviewId, is_hidden } = body;
+
+    if (!reviewId) {
+      return NextResponse.json({ success: false, error: 'Thiếu reviewId' }, { status: 400 });
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder') && isUuid(reviewId)) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+        const { error } = await supabaseAdmin
+          .from('reviews')
+          .update({ is_hidden })
+          .eq('id', reviewId);
+
+        if (error) {
+          console.error('Supabase review update error:', error.message);
+          return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        }
+      } catch (err: any) {
+        console.warn('Supabase review update network notice:', err.message);
+      }
+    }
+
+    // Sync to store
+    store.toggleHideReview(reviewId);
+
+    return NextResponse.json({ success: true, reviewId, is_hidden });
+  } catch (e: any) {
+    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const reviewId = searchParams.get('id');
+
+    if (!reviewId) {
+      return NextResponse.json({ success: false, error: 'Thiếu reviewId' }, { status: 400 });
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder') && isUuid(reviewId)) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+        await supabaseAdmin.from('review_reports').delete().eq('review_id', reviewId);
+        await supabaseAdmin.from('review_helpful').delete().eq('review_id', reviewId);
+        const { error } = await supabaseAdmin.from('reviews').delete().eq('id', reviewId);
+        if (error) {
+          return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        }
+      } catch (err: any) {
+        console.warn('Supabase review delete network notice:', err.message);
+      }
+    }
+
+    // Sync to store
+    store.deleteReview(reviewId);
+
+    return NextResponse.json({ success: true, deletedId: reviewId });
+  } catch (e: any) {
+    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+  }
+}

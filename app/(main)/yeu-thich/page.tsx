@@ -13,14 +13,28 @@ function FavoritesContent() {
   const { user } = useAuth();
   const [favorites, setFavorites] = useState<Place[]>([]);
 
-  const loadFavorites = () => {
+  const loadFavorites = async () => {
     if (user) {
+      try {
+        const res = await fetch(`/api/favorites?userId=${user.id}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.placeIds)) {
+            const places = store.getEnrichedPlaces();
+            const set = new Set(json.placeIds);
+            setFavorites(places.filter((p) => set.has(p.id)));
+            return;
+          }
+        }
+      } catch (e) {}
       setFavorites(store.getUserFavorites(user.id));
     }
   };
 
   useEffect(() => {
     loadFavorites();
+    const unsub = store.subscribe(loadFavorites);
+    return () => unsub();
   }, [user]);
 
   return (

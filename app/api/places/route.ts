@@ -86,21 +86,6 @@ const isUuid = (str?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 };
 
-const normalizeCategoryText = (str?: string | null): string => {
-  if (!str) return '';
-  return str.normalize('NFC').toLowerCase().trim();
-};
-
-const unaccentCategoryText = (str?: string | null): string => {
-  if (!str) return '';
-  return str
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[đĐ]/g, (m) => (m === 'đ' ? 'd' : 'D'))
-    .toLowerCase()
-    .trim();
-};
-
 async function resolveCategoryFromSupabase(
   supabaseAdmin: any,
   submittedId: any,
@@ -108,7 +93,7 @@ async function resolveCategoryFromSupabase(
 ): Promise<number | null> {
   const parsedId = (submittedId != null && submittedId !== '') ? Number(submittedId) : NaN;
 
-  // 1. Direct ID lookup in Supabase public.categories
+  // 1. ID tồn tại trong DB -> dùng ID
   if (!isNaN(parsedId)) {
     try {
       const { data: catRow, error: catErr } = await supabaseAdmin
@@ -123,55 +108,26 @@ async function resolveCategoryFromSupabase(
     } catch (e) {}
   }
 
-  // 2. If ID did not match directly, load all categories from public.categories
-  try {
-    const { data: dbCategories, error: listErr } = await supabaseAdmin
-      .from('categories')
-      .select('id, name')
-      .order('id', { ascending: true });
+  // 2. ID không tồn tại nhưng category_name khớp chính xác một category DB -> resolve bằng name
+  if (submittedName && typeof submittedName === 'string' && submittedName.trim()) {
+    try {
+      const targetName = submittedName.trim().toLowerCase().normalize('NFC');
+      const { data: dbCategories, error: listErr } = await supabaseAdmin
+        .from('categories')
+        .select('id, name');
 
-    if (listErr || !dbCategories || dbCategories.length === 0) {
-      return null;
-    }
-
-    // Direct ID check in loaded array
-    if (!isNaN(parsedId)) {
-      const idMatch = dbCategories.find((c: any) => Number(c.id) === parsedId);
-      if (idMatch?.id != null) return Number(idMatch.id);
-    }
-
-    // Collect candidate names to test
-    const candidateNames: string[] = [];
-    if (submittedName && typeof submittedName === 'string' && submittedName.trim()) {
-      candidateNames.push(submittedName.trim());
-    }
-    // Also if parsedId corresponds to a mock category, include its name as candidate
-    if (!isNaN(parsedId)) {
-      const mock = INITIAL_CATEGORIES.find((m) => m.id === parsedId);
-      if (mock && !candidateNames.includes(mock.name)) {
-        candidateNames.push(mock.name);
+      if (!listErr && dbCategories && dbCategories.length > 0) {
+        const match = dbCategories.find(
+          (c: any) => String(c.name).trim().toLowerCase().normalize('NFC') === targetName
+        );
+        if (match?.id != null) {
+          return Number(match.id);
+        }
       }
-    }
+    } catch (e) {}
+  }
 
-    // Match exact normalized NFC
-    for (const cand of candidateNames) {
-      const normCand = normalizeCategoryText(cand);
-      const exactMatch = dbCategories.find(
-        (c: any) => normalizeCategoryText(c.name) === normCand
-      );
-      if (exactMatch?.id != null) return Number(exactMatch.id);
-    }
-
-    // Match accent-insensitive
-    for (const cand of candidateNames) {
-      const unaccentCand = unaccentCategoryText(cand);
-      const unaccentMatch = dbCategories.find(
-        (c: any) => unaccentCategoryText(c.name) === unaccentCand
-      );
-      if (unaccentMatch?.id != null) return Number(unaccentMatch.id);
-    }
-  } catch (err) {}
-
+  // 3. Cả hai không hợp lệ -> null (API trả về 400)
   return null;
 }
 
@@ -279,6 +235,11 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+
+      console.log('[PLACES CATEGORY DEBUG]', {
+        category_id: validCatId,
+        type: typeof validCatId,
+      });
 
       const insertPayload: any = {
         name: name.trim(),
@@ -480,6 +441,10 @@ export async function PATCH(request: NextRequest) {
           );
 
           if (patchCatId != null) {
+            console.log('[PLACES CATEGORY DEBUG PATCH]', {
+              category_id: patchCatId,
+              type: typeof patchCatId,
+            });
             updateData.category_id = patchCatId;
           }
         }
@@ -519,6 +484,19 @@ export async function PATCH(request: NextRequest) {
               is_read: false,
             });
           } catch (nErr) {}
+        }
+
+        if (body.amenities && Array.isArray(body.amenities)) {
+          try {
+            await supabaseAdmin.from('place_amenities').delete().eq('place_id', placeId);
+            const rows = body.amenities.map((a: any) => ({
+              place_id: placeId,
+              amenity_id: typeof a === 'object' ? a.id : Number(a),
+            })).filter((r: any) => !isNaN(r.amenity_id));
+            if (rows.length > 0) {
+              await supabaseAdmin.from('place_amenities').insert(rows);
+            }
+          } catch (paErr) {}
         }
 
         return NextResponse.json({ success: true, place: data });

@@ -22,17 +22,31 @@ export default function AdminReviewsPage() {
     store.loadFromSupabase().then(loadData);
   }, []);
 
-  const handleToggleHide = (revId: string) => {
+  const handleToggleHide = async (revId: string) => {
+    const rev = reviews.find((r) => r.id === revId);
+    const nextHidden = rev ? !rev.is_hidden : true;
     store.toggleHideReview(revId);
     loadData();
     showToast('Đã cập nhật trạng thái hiển thị của đánh giá', 'info');
+
+    try {
+      await fetch('/api/reviews', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewId: revId, is_hidden: nextHidden }),
+      });
+    } catch (e) {}
   };
 
-  const handleDelete = (revId: string) => {
+  const handleDelete = async (revId: string) => {
     if (confirm('Bạn có chắc muốn xóa vĩnh viễn đánh giá này?')) {
       store.deleteReview(revId);
       loadData();
       showToast('Đã xóa đánh giá thành công', 'success');
+
+      try {
+        await fetch(`/api/reviews?id=${revId}`, { method: 'DELETE' });
+      } catch (e) {}
     }
   };
 

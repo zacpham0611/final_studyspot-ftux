@@ -19,58 +19,156 @@ import {
   Wind,
   Bike,
   Tag,
-  Moon
+  Moon,
+  Loader2
 } from 'lucide-react';
 
 export default function AdminCategoriesPage() {
   const { showToast } = useToast();
   const [categories, setCategories] = useState<Category[]>([]);
   const [amenities, setAmenities] = useState<Amenity[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Add inputs
+  // Add inputs & submission states
   const [newCatName, setNewCatName] = useState('');
+  const [addingCat, setAddingCat] = useState(false);
   const [newAmName, setNewAmName] = useState('');
+  const [addingAm, setAddingAm] = useState(false);
 
-  const loadData = () => {
-    setCategories(store.getCategories());
-    setAmenities(store.getAmenities());
+  const loadData = async () => {
+    try {
+      const [catRes, amRes] = await Promise.all([
+        fetch('/api/categories', { cache: 'no-store' }),
+        fetch('/api/amenities', { cache: 'no-store' })
+      ]);
+
+      if (catRes.ok) {
+        const catJson = await catRes.json();
+        if (Array.isArray(catJson.categories)) {
+          setCategories(catJson.categories);
+        }
+      }
+
+      if (amRes.ok) {
+        const amJson = await amRes.json();
+        if (Array.isArray(amJson.amenities)) {
+          setAmenities(amJson.amenities);
+        }
+      }
+    } catch (e) {
+      // Fallback to store
+      setCategories(store.getCategories());
+      setAmenities(store.getAmenities());
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     loadData();
-    store.loadFromSupabase().then(loadData);
-    const unsub = store.subscribe(loadData);
+    const unsub = store.subscribe(() => {
+      setCategories(store.getCategories());
+      setAmenities(store.getAmenities());
+    });
     return () => unsub();
   }, []);
 
-  const handleAddCategory = (e: React.FormEvent) => {
+  const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCatName.trim()) return;
-    store.saveCategory({ id: Date.now(), name: newCatName.trim(), icon: 'Coffee' });
-    setNewCatName('');
-    loadData();
-    showToast('Đã thêm loại địa điểm mới', 'success');
+    if (!newCatName.trim() || addingCat) return;
+
+    setAddingCat(true);
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newCatName.trim(), icon: 'Coffee' }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Lỗi khi thêm loại địa điểm mới', 'error');
+        return;
+      }
+
+      setNewCatName('');
+      showToast(`Đã thêm loại địa điểm "${data.category.name}" thành công!`, 'success');
+      await loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi mạng khi thêm danh mục', 'error');
+    } finally {
+      setAddingCat(false);
+    }
   };
 
-  const handleDeleteCategory = (id: number) => {
-    store.deleteCategory(id);
-    loadData();
-    showToast('Đã xóa loại địa điểm', 'info');
+  const handleDeleteCategory = async (id: number, name: string) => {
+    if (!confirm(`Bạn có chắc muốn xóa loại địa điểm "${name}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/categories?id=${id}`, {
+        method: 'DELETE',
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Lỗi khi xóa loại địa điểm', 'error');
+        return;
+      }
+
+      showToast(`Đã xóa loại địa điểm "${name}" thành công`, 'info');
+      await loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi kết nối khi xóa danh mục', 'error');
+    }
   };
 
-  const handleAddAmenity = (e: React.FormEvent) => {
+  const handleAddAmenity = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAmName.trim()) return;
-    store.saveAmenity({ id: Date.now(), name: newAmName.trim(), icon: 'Sparkles' });
-    setNewAmName('');
-    loadData();
-    showToast('Đã thêm tiện ích mới', 'success');
+    if (!newAmName.trim() || addingAm) return;
+
+    setAddingAm(true);
+    try {
+      const res = await fetch('/api/amenities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newAmName.trim(), icon: 'Sparkles' }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Lỗi khi thêm tiện ích mới', 'error');
+        return;
+      }
+
+      setNewAmName('');
+      showToast(`Đã thêm tiện ích "${data.amenity.name}" thành công!`, 'success');
+      await loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi mạng khi thêm tiện ích', 'error');
+    } finally {
+      setAddingAm(false);
+    }
   };
 
-  const handleDeleteAmenity = (id: number) => {
-    store.deleteAmenity(id);
-    loadData();
-    showToast('Đã xóa tiện ích', 'info');
+  const handleDeleteAmenity = async (id: number, name: string) => {
+    if (!confirm(`Bạn có chắc muốn xóa tiện ích "${name}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/amenities?id=${id}`, {
+        method: 'DELETE',
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Lỗi khi xóa tiện ích', 'error');
+        return;
+      }
+
+      showToast(`Đã xóa tiện ích "${name}" thành công`, 'info');
+      await loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi kết nối khi xóa tiện ích', 'error');
+    }
   };
 
   return (
@@ -96,34 +194,42 @@ export default function AdminCategoriesPage() {
               placeholder="Tên loại địa điểm mới..."
               value={newCatName}
               onChange={(e) => setNewCatName(e.target.value)}
+              disabled={addingCat}
               className="flex-1 px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
             />
             <button
               type="submit"
-              className="px-3.5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover"
+              disabled={addingCat || !newCatName.trim()}
+              className="px-3.5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover disabled:opacity-50 flex items-center gap-1.5"
             >
-              + Thêm
+              {addingCat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '+ Thêm'}
             </button>
           </form>
 
           <div className="space-y-2">
-            {categories.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-center justify-between p-3 rounded-xl border border-border text-xs"
-              >
-                <div className="flex items-center gap-2">
-                  <Coffee className="w-4 h-4 text-burgundy" />
-                  <span className="font-semibold text-gray-800">{c.name}</span>
-                </div>
-                <button
-                  onClick={() => handleDeleteCategory(c.id)}
-                  className="text-gray-400 hover:text-rose-600"
+            {categories.length === 0 ? (
+              <p className="text-xs text-gray-400 italic py-2">Chưa có danh mục nào.</p>
+            ) : (
+              categories.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between p-3 rounded-xl border border-border text-xs hover:border-burgundy/30 transition-colors"
                 >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-2">
+                    <Coffee className="w-4 h-4 text-burgundy" />
+                    <span className="font-semibold text-gray-800">{c.name}</span>
+                    <span className="text-[10px] text-gray-400 font-mono">#{c.id}</span>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteCategory(c.id, c.name)}
+                    className="text-gray-400 hover:text-rose-600 transition-colors p-1"
+                    title="Xóa danh mục"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -140,34 +246,42 @@ export default function AdminCategoriesPage() {
               placeholder="Tên tiện ích mới..."
               value={newAmName}
               onChange={(e) => setNewAmName(e.target.value)}
+              disabled={addingAm}
               className="flex-1 px-3 py-2 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
             />
             <button
               type="submit"
-              className="px-3.5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover"
+              disabled={addingAm || !newAmName.trim()}
+              className="px-3.5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover disabled:opacity-50 flex items-center gap-1.5"
             >
-              + Thêm
+              {addingAm ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '+ Thêm'}
             </button>
           </form>
 
           <div className="space-y-2">
-            {amenities.map((a) => (
-              <div
-                key={a.id}
-                className="flex items-center justify-between p-3 rounded-xl border border-border text-xs"
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  <span className="font-semibold text-gray-800">{a.name}</span>
-                </div>
-                <button
-                  onClick={() => handleDeleteAmenity(a.id)}
-                  className="text-gray-400 hover:text-rose-600"
+            {amenities.length === 0 ? (
+              <p className="text-xs text-gray-400 italic py-2">Chưa có tiện ích nào.</p>
+            ) : (
+              amenities.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between p-3 rounded-xl border border-border text-xs hover:border-burgundy/30 transition-colors"
                 >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span className="font-semibold text-gray-800">{a.name}</span>
+                    <span className="text-[10px] text-gray-400 font-mono">#{a.id}</span>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteAmenity(a.id, a.name)}
+                    className="text-gray-400 hover:text-rose-600 transition-colors p-1"
+                    title="Xóa tiện ích"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

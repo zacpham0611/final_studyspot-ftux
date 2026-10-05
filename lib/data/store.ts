@@ -386,8 +386,23 @@ class StudySpotStore {
         this.categories = supaCategories;
       }
 
-      if (amenitiesRes.data && amenitiesRes.data.length > 0) {
-        this.amenities = amenitiesRes.data;
+      let supaAmenities: Amenity[] | null = null;
+      try {
+        const amRes = await fetch('/api/amenities', { cache: 'no-store' });
+        if (amRes.ok) {
+          const amJson = await amRes.json();
+          if (Array.isArray(amJson.amenities) && amJson.amenities.length > 0) {
+            supaAmenities = amJson.amenities;
+          }
+        }
+      } catch (aErr) {}
+
+      if (!supaAmenities && amenitiesRes.data && amenitiesRes.data.length > 0) {
+        supaAmenities = amenitiesRes.data;
+      }
+
+      if (supaAmenities !== null && supaAmenities.length > 0) {
+        this.amenities = supaAmenities;
       }
 
       if (reportsRes.data) {
@@ -1134,8 +1149,14 @@ class StudySpotStore {
     this.persist();
     this.notify();
 
-    // Persist to Supabase public.favorites
+    // Persist to Supabase public.favorites via server API & client
     if (typeof window !== 'undefined' && isUuid(userId) && isUuid(placeId)) {
+      fetch('/api/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, placeId, isFavorite: isNowFav }),
+      }).catch(() => {});
+
       if (isNowFav) {
         supabase.from('favorites').upsert({ user_id: userId, place_id: placeId }).then(({ error }) => {
           if (error) console.warn('Supabase add favorite notice:', error.message);
