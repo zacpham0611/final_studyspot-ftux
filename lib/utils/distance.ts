@@ -1,6 +1,6 @@
 export const FTU_COORDINATES = {
-  lat: 21.0245,
-  lng: 105.8046,
+  lat: 21.02259,
+  lng: 105.80518,
   name: 'Đại học Ngoại thương Hà Nội (FTU)',
   address: '91 Phố Chùa Láng, Láng Thượng, Đống Đa, Hà Nội',
 };
