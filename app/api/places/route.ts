@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
   const query = searchParams.get('q') || undefined;
   const categoryId = searchParams.get('category') ? Number(searchParams.get('category')) : undefined;
   const includeAll = searchParams.get('all') === '1';
+  const statusParam = searchParams.get('status') || undefined;
 
   // 1. Query Supabase directly if connected (Single Source of Truth)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -21,12 +22,15 @@ export async function GET(request: NextRequest) {
         auth: { persistSession: false },
       });
       let q = supabaseAdmin.from('places').select('*');
-      if (!includeAll) {
+      if (statusParam) {
+        q = q.eq('status', statusParam);
+      } else if (!includeAll) {
         q = q.eq('status', 'approved');
       }
       if (categoryId) {
         q = q.eq('category_id', categoryId);
       }
+      q = q.order('created_at', { ascending: false });
       const { data, error } = await q;
       if (!error && data) {
         let places = data.map((dp: any) => ({
@@ -57,9 +61,13 @@ export async function GET(request: NextRequest) {
   }
 
   // 2. Fallback to store
-  const places = includeAll 
+  let places = includeAll 
     ? store.getAllPlacesAdmin() 
     : store.filterPlaces({ query, categoryId });
+
+  if (statusParam) {
+    places = places.filter((p: any) => p.status === statusParam);
+  }
 
   return NextResponse.json(
     { places, count: places.length },
@@ -353,6 +361,21 @@ export async function PATCH(request: NextRequest) {
         if (error) {
           console.warn('Supabase places update error:', error.message);
           return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        }
+
+        if (data && (status === 'approved' || status === 'rejected') && data.created_by && isUuid(data.created_by)) {
+          const notifContent = status === 'approved'
+            ? `Đề xuất địa điểm "${data.name}" của bạn đã được Admin phê duyệt và xuất bản!`
+            : `Đề xuất địa điểm "${data.name}" của bạn đã bị từ chối. Lý do: ${rejectReason || 'Không đáp ứng tiêu chuẩn.'}`;
+          const notifLink = status === 'approved' ? `/dia-diem/${data.id}` : '/ho-so';
+          try {
+            await supabaseAdmin.from('notifications').insert({
+              user_id: data.created_by,
+              noi_dung: notifContent,
+              link: notifLink,
+              is_read: false,
+            });
+          } catch (nErr) {}
         }
 
         return NextResponse.json({ success: true, place: data });

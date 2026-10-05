@@ -281,21 +281,21 @@ class StudySpotStore {
 
       // --- Authoritative Places Sync (Single Source of Truth) ---
       let rawPlaces: any[] | null = null;
-      if (placesRes.data) {
-        rawPlaces = placesRes.data;
-      } else {
-        // Fallback to Next.js API route /api/places?all=1 with service role permissions
-        try {
-          const apiRes = await fetch('/api/places?all=1', { cache: 'no-store' });
-          if (apiRes.ok) {
-            const apiData = await apiRes.json();
-            if (Array.isArray(apiData.places)) {
-              rawPlaces = apiData.places;
-            }
+      try {
+        const apiRes = await fetch('/api/places?all=1', { cache: 'no-store' });
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (Array.isArray(apiData.places)) {
+            rawPlaces = apiData.places;
           }
-        } catch (apiErr) {
-          console.warn('Fallback /api/places?all=1 fetch notice:', apiErr);
         }
+      } catch (apiErr) {
+        console.warn('Authoritative /api/places?all=1 fetch notice:', apiErr);
+      }
+
+      // Fallback to client Supabase query if /api/places?all=1 was not reachable
+      if (!rawPlaces && placesRes.data) {
+        rawPlaces = placesRes.data;
       }
 
       if (rawPlaces !== null) {

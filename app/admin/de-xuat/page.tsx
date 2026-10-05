@@ -39,7 +39,23 @@ export default function AdminProposalsPage() {
 
   useEffect(() => {
     loadData();
-    store.loadFromSupabase().then(loadData);
+
+    // Directly fetch all places from server (uses service role key to bypass client RLS)
+    fetch('/api/places?all=1', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.places)) {
+          data.places.forEach((p: Place) => store.savePlace(p));
+          setProposals(data.places.filter((p: Place) => p.status === 'pending'));
+        }
+      })
+      .catch((err) => {
+        console.warn('Initial admin proposals fetch notice:', err);
+      })
+      .finally(() => {
+        store.loadFromSupabase().then(loadData);
+      });
+
     const unsubscribe = store.subscribe(() => {
       loadData();
     });

@@ -288,6 +288,7 @@ function SuggestPlaceContent() {
         targetPlaceId = resJson.place.id;
         targetLat = resJson.place.lat;
         targetLng = resJson.place.lng;
+        store.savePlace(resJson.place);
       } else {
         const fallbackPlace = store.proposePlace(placePayload, user || undefined);
         targetPlaceId = fallbackPlace.id;
