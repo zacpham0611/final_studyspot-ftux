@@ -86,30 +86,91 @@ const isUuid = (str?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 };
 
-function resolveCategoryId(
-  categoriesList: Array<{ id: number | string; name: string }>,
+const normalizeCategoryText = (str?: string | null): string => {
+  if (!str) return '';
+  return str.normalize('NFC').toLowerCase().trim();
+};
+
+const unaccentCategoryText = (str?: string | null): string => {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, (m) => (m === 'đ' ? 'd' : 'D'))
+    .toLowerCase()
+    .trim();
+};
+
+async function resolveCategoryFromSupabase(
+  supabaseAdmin: any,
   submittedId: any,
   submittedName?: string | null
-): number | null {
-  if (!categoriesList || categoriesList.length === 0) return null;
+): Promise<number | null> {
+  const parsedId = (submittedId != null && submittedId !== '') ? Number(submittedId) : NaN;
 
-  // 1. Nếu request có category_id, kiểm tra trực tiếp ID đó trong categories
-  if (submittedId != null && submittedId !== '') {
-    const parsedId = Number(submittedId);
-    if (!isNaN(parsedId)) {
-      const directMatch = categoriesList.find((c) => Number(c.id) === parsedId);
-      if (directMatch) return Number(directMatch.id);
+  // 1. Direct ID lookup in Supabase public.categories
+  if (!isNaN(parsedId)) {
+    try {
+      const { data: catRow, error: catErr } = await supabaseAdmin
+        .from('categories')
+        .select('id')
+        .eq('id', parsedId)
+        .maybeSingle();
+
+      if (!catErr && catRow?.id != null) {
+        return Number(catRow.id);
+      }
+    } catch (e) {}
+  }
+
+  // 2. If ID did not match directly, load all categories from public.categories
+  try {
+    const { data: dbCategories, error: listErr } = await supabaseAdmin
+      .from('categories')
+      .select('id, name')
+      .order('id', { ascending: true });
+
+    if (listErr || !dbCategories || dbCategories.length === 0) {
+      return null;
     }
-  }
 
-  // 2. Chỉ resolve bằng category_name nếu không có category_id
-  if ((submittedId == null || submittedId === '' || isNaN(Number(submittedId))) && submittedName) {
-    const targetName = String(submittedName).trim().toLowerCase().normalize('NFC');
-    const nameMatch = categoriesList.find(
-      (c) => String(c.name).trim().toLowerCase().normalize('NFC') === targetName
-    );
-    if (nameMatch) return Number(nameMatch.id);
-  }
+    // Direct ID check in loaded array
+    if (!isNaN(parsedId)) {
+      const idMatch = dbCategories.find((c: any) => Number(c.id) === parsedId);
+      if (idMatch?.id != null) return Number(idMatch.id);
+    }
+
+    // Collect candidate names to test
+    const candidateNames: string[] = [];
+    if (submittedName && typeof submittedName === 'string' && submittedName.trim()) {
+      candidateNames.push(submittedName.trim());
+    }
+    // Also if parsedId corresponds to a mock category, include its name as candidate
+    if (!isNaN(parsedId)) {
+      const mock = INITIAL_CATEGORIES.find((m) => m.id === parsedId);
+      if (mock && !candidateNames.includes(mock.name)) {
+        candidateNames.push(mock.name);
+      }
+    }
+
+    // Match exact normalized NFC
+    for (const cand of candidateNames) {
+      const normCand = normalizeCategoryText(cand);
+      const exactMatch = dbCategories.find(
+        (c: any) => normalizeCategoryText(c.name) === normCand
+      );
+      if (exactMatch?.id != null) return Number(exactMatch.id);
+    }
+
+    // Match accent-insensitive
+    for (const cand of candidateNames) {
+      const unaccentCand = unaccentCategoryText(cand);
+      const unaccentMatch = dbCategories.find(
+        (c: any) => unaccentCategoryText(c.name) === unaccentCand
+      );
+      if (unaccentMatch?.id != null) return Number(unaccentMatch.id);
+    }
+  } catch (err) {}
 
   return null;
 }
@@ -201,47 +262,11 @@ export async function POST(request: NextRequest) {
       }
 
       // Validate category_id foreign key directly against real Supabase public.categories
-      let validCatId: number | null = null;
-      const parsedCatId = (category_id != null && category_id !== '') ? Number(category_id) : NaN;
-
-      if (!isNaN(parsedCatId)) {
-        try {
-          const { data: catRow, error: catErr } = await supabaseAdmin
-            .from('categories')
-            .select('id, name')
-            .eq('id', parsedCatId)
-            .maybeSingle();
-
-          if (catErr) {
-            console.error('Supabase categories direct query error:', catErr.message);
-          } else if (catRow?.id != null) {
-            validCatId = Number(catRow.id);
-          }
-        } catch (cErr: any) {
-          console.warn('Category query exception:', cErr.message);
-        }
-      }
-
-      // If category_id was not provided, but category_name is present, resolve by exact name from public.categories
-      if (validCatId == null && (category_id == null || category_id === '' || isNaN(parsedCatId)) && body.category_name) {
-        try {
-          const targetName = String(body.category_name).trim().toLowerCase().normalize('NFC');
-          const { data: dbCategories } = await supabaseAdmin
-            .from('categories')
-            .select('id, name');
-
-          if (dbCategories && dbCategories.length > 0) {
-            const match = dbCategories.find(
-              (c) => String(c.name).trim().toLowerCase().normalize('NFC') === targetName
-            );
-            if (match?.id != null) {
-              validCatId = Number(match.id);
-            }
-          }
-        } catch (nameErr: any) {
-          console.warn('Category name match exception:', nameErr.message);
-        }
-      }
+      const validCatId = await resolveCategoryFromSupabase(
+        supabaseAdmin,
+        category_id,
+        body.category_name
+      );
 
       // STRICT VALIDATION: If category ID does not exist in public.categories, return 400 immediately!
       // NEVER fallback to mock store! NEVER allow insert with invalid ID!
@@ -448,40 +473,11 @@ export async function PATCH(request: NextRequest) {
         const updateData: any = { ...editFields };
 
         if (category_id !== undefined || body.category_name !== undefined) {
-          let patchCatId: number | null = null;
-          const parsedCatId = (category_id != null && category_id !== '') ? Number(category_id) : NaN;
-
-          if (!isNaN(parsedCatId)) {
-            try {
-              const { data: catRow } = await supabaseAdmin
-                .from('categories')
-                .select('id')
-                .eq('id', parsedCatId)
-                .maybeSingle();
-
-              if (catRow?.id != null) {
-                patchCatId = Number(catRow.id);
-              }
-            } catch (cErr) {}
-          }
-
-          if (patchCatId == null && (category_id == null || category_id === '' || isNaN(parsedCatId)) && body.category_name) {
-            try {
-              const targetName = String(body.category_name).trim().toLowerCase().normalize('NFC');
-              const { data: dbCategories } = await supabaseAdmin
-                .from('categories')
-                .select('id, name');
-
-              if (dbCategories && dbCategories.length > 0) {
-                const match = dbCategories.find(
-                  (c) => String(c.name).trim().toLowerCase().normalize('NFC') === targetName
-                );
-                if (match?.id != null) {
-                  patchCatId = Number(match.id);
-                }
-              }
-            } catch (nameErr) {}
-          }
+          const patchCatId = await resolveCategoryFromSupabase(
+            supabaseAdmin,
+            category_id,
+            body.category_name
+          );
 
           if (patchCatId != null) {
             updateData.category_id = patchCatId;
