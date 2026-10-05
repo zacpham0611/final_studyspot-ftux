@@ -9,6 +9,7 @@ import { useToast } from '@/components/common/Toast';
 import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle, Check, Compass } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AuthGuard } from '@/components/auth/AuthGuard';
+import { Category, Amenity } from '@/lib/types/database';
 
 const MapPinPicker = dynamic(() => import('@/components/map/MapPinPicker'), {
   ssr: false,
@@ -20,8 +21,13 @@ function SuggestPlaceContent() {
   const { showToast } = useToast();
   const { user } = useAuth();
 
+  const [categories, setCategories] = useState<Category[]>(() => store.getCategories());
+  const [amenities, setAmenities] = useState<Amenity[]>(() => store.getAmenities());
   const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState(1);
+  const [categoryId, setCategoryId] = useState<number>(() => {
+    const initialCats = store.getCategories();
+    return initialCats.length > 0 ? initialCats[0].id : 1;
+  });
   const [address, setAddress] = useState('');
   const [lat, setLat] = useState(FTU_COORDINATES.lat);
   const [lng, setLng] = useState(FTU_COORDINATES.lng);
@@ -56,8 +62,24 @@ function SuggestPlaceContent() {
   } | null>(null);
   const [reverseError, setReverseError] = useState<string | null>(null);
 
-  const categories = store.getCategories();
-  const amenities = store.getAmenities();
+  useEffect(() => {
+    const updateStoreData = () => {
+      const cats = store.getCategories();
+      if (cats && cats.length > 0) {
+        setCategories(cats);
+        setCategoryId((prev) => (cats.some((c) => c.id === prev) ? prev : cats[0].id));
+      }
+      const ams = store.getAmenities();
+      if (ams && ams.length > 0) {
+        setAmenities(ams);
+      }
+    };
+
+    updateStoreData();
+    store.loadFromSupabase().then(updateStoreData);
+    const unsub = store.subscribe(updateStoreData);
+    return () => unsub();
+  }, []);
 
   // Debounced Search (400ms) calling server-side Nominatim endpoint
   useEffect(() => {
@@ -250,10 +272,12 @@ function SuggestPlaceContent() {
     setSubmitting(true);
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
+    const selectedCategory = categories.find((c) => c.id === categoryId);
 
     const placePayload = {
       name: name.trim(),
       category_id: categoryId,
+      category_name: selectedCategory?.name,
       address: address.trim(),
       lat: finalLat,
       lng: finalLng,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { store } from '@/lib/data/store';
 import { createClient } from '@supabase/supabase-js';
+import { INITIAL_CATEGORIES } from '@/lib/data/mockData';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -171,18 +172,52 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validate category_id foreign key
-      let validCatId = Number(category_id) || 1;
+      // Validate category_id foreign key against real Supabase public.categories
+      let validCatId: number | null = null;
       try {
-        const { data: catRow } = await supabaseAdmin
+        const { data: dbCategories } = await supabaseAdmin
           .from('categories')
-          .select('id')
-          .eq('id', validCatId)
-          .maybeSingle();
-        if (!catRow) {
-          validCatId = 1;
+          .select('id, name')
+          .order('id', { ascending: true });
+
+        if (dbCategories && dbCategories.length > 0) {
+          const parsedId = Number(category_id);
+          // 1. Direct match by real database ID
+          const directMatch = !isNaN(parsedId) ? dbCategories.find((c) => c.id === parsedId) : null;
+          if (directMatch) {
+            validCatId = directMatch.id;
+          }
+
+          // 2. If not matched by direct ID, match by category name or mock identifier
+          if (!validCatId) {
+            const mockCat = INITIAL_CATEGORIES.find((m) => m.id === parsedId);
+            const targetName = (body.category_name || mockCat?.name || '').trim().toLowerCase();
+
+            if (targetName) {
+              const nameMatch = dbCategories.find(
+                (c) => c.name.trim().toLowerCase() === targetName
+              );
+              if (nameMatch) {
+                validCatId = nameMatch.id;
+              }
+            }
+          }
+
+          // 3. Fallback: if user didn't specify or invalid, use the first real category from Supabase
+          if (!validCatId && !category_id) {
+            validCatId = dbCategories[0].id;
+          }
         }
-      } catch (cErr) {}
+      } catch (cErr: any) {
+        console.warn('Category resolution error:', cErr.message);
+      }
+
+      if (!validCatId) {
+        return NextResponse.json(
+          { success: false, error: 'Loại hình địa điểm (danh mục) không hợp lệ hoặc không tồn tại trong hệ thống.' },
+          { status: 400 }
+        );
+      }
 
       const insertPayload: any = {
         name: name.trim(),
@@ -375,6 +410,36 @@ export async function PATCH(request: NextRequest) {
         });
 
         const updateData: any = { ...editFields };
+
+        if (category_id !== undefined) {
+          try {
+            const { data: dbCategories } = await supabaseAdmin
+              .from('categories')
+              .select('id, name');
+
+            if (dbCategories && dbCategories.length > 0) {
+              const parsedId = Number(category_id);
+              const directMatch = !isNaN(parsedId) ? dbCategories.find((c) => c.id === parsedId) : null;
+              if (directMatch) {
+                updateData.category_id = directMatch.id;
+              } else {
+                const mockCat = INITIAL_CATEGORIES.find((m) => m.id === parsedId);
+                const targetName = (body.category_name || mockCat?.name || '').trim().toLowerCase();
+                if (targetName) {
+                  const nameMatch = dbCategories.find(
+                    (c) => c.name.trim().toLowerCase() === targetName
+                  );
+                  if (nameMatch) {
+                    updateData.category_id = nameMatch.id;
+                  }
+                }
+              }
+            }
+          } catch (cErr: any) {
+            console.warn('Category resolution error in PATCH:', cErr.message);
+          }
+        }
+
         if (status) {
           updateData.status = status;
           if (status === 'approved') {

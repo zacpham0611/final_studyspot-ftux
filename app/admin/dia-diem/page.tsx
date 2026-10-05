@@ -111,9 +111,11 @@ export default function AdminPlacesPage() {
       return;
     }
 
-    const editPayload = {
+    const selectedCat = categories.find((c) => c.id === Number(editCatId));
+    const editPayload: any = {
       name: editName.trim(),
       category_id: editCatId,
+      category_name: selectedCat?.name,
       address: editAddress.trim(),
       lat: editLat,
       lng: editLng,
@@ -242,9 +244,11 @@ export default function AdminPlacesPage() {
       return;
     }
 
+    const selectedCat = categories.find((c) => c.id === Number(newCatId));
     const payload = {
       name: newName.trim(),
       category_id: Number(newCatId),
+      category_name: selectedCat?.name,
       address: newAddress.trim(),
       lat: Number(newLat),
       lng: Number(newLng),
