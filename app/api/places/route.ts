@@ -200,33 +200,57 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validate category_id foreign key against real Supabase public.categories
+      // Validate category_id foreign key directly against real Supabase public.categories
       let validCatId: number | null = null;
-      let dbCategories: Array<{ id: number | string; name: string }> | null = null;
-      try {
-        const { data, error: catError } = await supabaseAdmin
-          .from('categories')
-          .select('id, name')
-          .order('id', { ascending: true });
+      const parsedCatId = (category_id != null && category_id !== '') ? Number(category_id) : NaN;
 
-        if (catError) {
-          console.error('Supabase public.categories query error:', catError.message);
-        } else if (data && data.length > 0) {
-          dbCategories = data;
+      if (!isNaN(parsedCatId)) {
+        try {
+          const { data: catRow, error: catErr } = await supabaseAdmin
+            .from('categories')
+            .select('id, name')
+            .eq('id', parsedCatId)
+            .maybeSingle();
+
+          if (catErr) {
+            console.error('Supabase categories direct query error:', catErr.message);
+          } else if (catRow?.id != null) {
+            validCatId = Number(catRow.id);
+          }
+        } catch (cErr: any) {
+          console.warn('Category query exception:', cErr.message);
         }
-      } catch (cErr: any) {
-        console.warn('Category resolution exception:', cErr.message);
       }
 
-      const activeCategories = (dbCategories && dbCategories.length > 0)
-        ? dbCategories
-        : store.getCategories();
+      // If category_id was not provided, but category_name is present, resolve by exact name from public.categories
+      if (validCatId == null && (category_id == null || category_id === '' || isNaN(parsedCatId)) && body.category_name) {
+        try {
+          const targetName = String(body.category_name).trim().toLowerCase().normalize('NFC');
+          const { data: dbCategories } = await supabaseAdmin
+            .from('categories')
+            .select('id, name');
 
-      validCatId = resolveCategoryId(activeCategories, category_id, body.category_name);
+          if (dbCategories && dbCategories.length > 0) {
+            const match = dbCategories.find(
+              (c) => String(c.name).trim().toLowerCase().normalize('NFC') === targetName
+            );
+            if (match?.id != null) {
+              validCatId = Number(match.id);
+            }
+          }
+        } catch (nameErr: any) {
+          console.warn('Category name match exception:', nameErr.message);
+        }
+      }
 
-      if (!validCatId) {
+      // STRICT VALIDATION: If category ID does not exist in public.categories, return 400 immediately!
+      // NEVER fallback to mock store! NEVER allow insert with invalid ID!
+      if (validCatId == null) {
         return NextResponse.json(
-          { success: false, error: 'Loại hình địa điểm (danh mục) không hợp lệ hoặc không tồn tại trong hệ thống.' },
+          { 
+            success: false, 
+            error: 'Loại hình địa điểm (danh mục) không hợp lệ hoặc không tồn tại trong hệ thống. Vui lòng tải lại trang và chọn danh mục hợp lệ.' 
+          },
           { status: 400 }
         );
       }
@@ -424,27 +448,43 @@ export async function PATCH(request: NextRequest) {
         const updateData: any = { ...editFields };
 
         if (category_id !== undefined || body.category_name !== undefined) {
-          try {
-            let dbCategories: Array<{ id: number | string; name: string }> | null = null;
-            const { data, error: catError } = await supabaseAdmin
-              .from('categories')
-              .select('id, name')
-              .order('id', { ascending: true });
+          let patchCatId: number | null = null;
+          const parsedCatId = (category_id != null && category_id !== '') ? Number(category_id) : NaN;
 
-            if (!catError && data && data.length > 0) {
-              dbCategories = data;
-            }
+          if (!isNaN(parsedCatId)) {
+            try {
+              const { data: catRow } = await supabaseAdmin
+                .from('categories')
+                .select('id')
+                .eq('id', parsedCatId)
+                .maybeSingle();
 
-            const activeCategories = (dbCategories && dbCategories.length > 0)
-              ? dbCategories
-              : store.getCategories();
+              if (catRow?.id != null) {
+                patchCatId = Number(catRow.id);
+              }
+            } catch (cErr) {}
+          }
 
-            const matchedId = resolveCategoryId(activeCategories, category_id, body.category_name);
-            if (matchedId) {
-              updateData.category_id = Number(matchedId);
-            }
-          } catch (cErr: any) {
-            console.warn('Category resolution exception in PATCH:', cErr.message);
+          if (patchCatId == null && (category_id == null || category_id === '' || isNaN(parsedCatId)) && body.category_name) {
+            try {
+              const targetName = String(body.category_name).trim().toLowerCase().normalize('NFC');
+              const { data: dbCategories } = await supabaseAdmin
+                .from('categories')
+                .select('id, name');
+
+              if (dbCategories && dbCategories.length > 0) {
+                const match = dbCategories.find(
+                  (c) => String(c.name).trim().toLowerCase().normalize('NFC') === targetName
+                );
+                if (match?.id != null) {
+                  patchCatId = Number(match.id);
+                }
+              }
+            } catch (nameErr) {}
+          }
+
+          if (patchCatId != null) {
+            updateData.category_id = patchCatId;
           }
         }
 

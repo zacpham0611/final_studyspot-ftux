@@ -31,10 +31,7 @@ export default function AdminPlacesPage() {
   // Modal State for Edit Place
   const [editModalPlace, setEditModalPlace] = useState<Place | null>(null);
   const [editName, setEditName] = useState('');
-  const [editCatId, setEditCatId] = useState<number>(() => {
-    const cats = store.getCategories();
-    return cats.length > 0 ? cats[0].id : 1;
-  });
+  const [editCatId, setEditCatId] = useState<number | null>(null);
   const [editAddress, setEditAddress] = useState('');
   const [editLat, setEditLat] = useState(21.0245);
   const [editLng, setEditLng] = useState(105.8046);
@@ -50,10 +47,7 @@ export default function AdminPlacesPage() {
   // Modal State for Add New Place
   const [isAddPlaceOpen, setIsAddPlaceOpen] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newCatId, setNewCatId] = useState<number>(() => {
-    const cats = store.getCategories();
-    return cats.length > 0 ? cats[0].id : 1;
-  });
+  const [newCatId, setNewCatId] = useState<number | null>(null);
   const [newAddress, setNewAddress] = useState('');
   const [newLat, setNewLat] = useState(21.0245);
   const [newLng, setNewLng] = useState(105.8046);
@@ -66,7 +60,7 @@ export default function AdminPlacesPage() {
     const cats = store.getCategories();
     if (cats && cats.length > 0) {
       setCategories(cats);
-      setNewCatId((prev) => (cats.some((c) => Number(c.id) === Number(prev)) ? prev : Number(cats[0].id)));
+      setNewCatId((prev) => (prev && cats.some((c) => Number(c.id) === Number(prev))) ? prev : Number(cats[0].id));
     }
   };
 
@@ -77,7 +71,7 @@ export default function AdminPlacesPage() {
       .then((data) => {
         if (data && Array.isArray(data.categories) && data.categories.length > 0) {
           setCategories(data.categories);
-          setNewCatId((prev) => (data.categories.some((c: Category) => Number(c.id) === Number(prev)) ? prev : Number(data.categories[0].id)));
+          setNewCatId((prev) => (prev && data.categories.some((c: Category) => Number(c.id) === Number(prev))) ? prev : Number(data.categories[0].id));
         }
       })
       .catch(() => {});
@@ -135,9 +129,13 @@ export default function AdminPlacesPage() {
     }
 
     const activeCategories = categories.length > 0 ? categories : store.getCategories();
-    const selectedCat = activeCategories.find((c) => c.id === Number(editCatId)) || activeCategories[0];
-    const targetCatId = selectedCat ? selectedCat.id : Number(editCatId);
-    const targetCatName = selectedCat?.name;
+    const selectedCat = activeCategories.find((c) => Number(c.id) === Number(editCatId));
+    if (!selectedCat) {
+      showToast('Vui lòng chọn loại hình địa điểm (danh mục) hợp lệ', 'error');
+      return;
+    }
+    const targetCatId = Number(selectedCat.id);
+    const targetCatName = selectedCat.name;
 
     const editPayload: any = {
       name: editName.trim(),
@@ -272,9 +270,13 @@ export default function AdminPlacesPage() {
     }
 
     const activeCategories = categories.length > 0 ? categories : store.getCategories();
-    const selectedCat = activeCategories.find((c) => c.id === Number(newCatId)) || activeCategories[0];
-    const targetCatId = selectedCat ? selectedCat.id : Number(newCatId);
-    const targetCatName = selectedCat?.name;
+    const selectedCat = activeCategories.find((c) => Number(c.id) === Number(newCatId));
+    if (!selectedCat) {
+      showToast('Vui lòng chọn loại hình địa điểm (danh mục) hợp lệ', 'error');
+      return;
+    }
+    const targetCatId = Number(selectedCat.id);
+    const targetCatName = selectedCat.name;
 
     const payload = {
       name: newName.trim(),
@@ -614,13 +616,18 @@ export default function AdminPlacesPage() {
                 <div>
                   <label className="text-xs font-bold text-gray-700 block mb-1">Loại hình</label>
                   <select
-                    value={newCatId}
-                    onChange={(e) => setNewCatId(Number(e.target.value))}
+                    value={newCatId ?? ''}
+                    onChange={(e) => setNewCatId(e.target.value ? Number(e.target.value) : null)}
+                    required
                     className="w-full p-2.5 rounded-xl border border-border text-xs bg-white focus:outline-none focus:border-burgundy"
                   >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                    {categories.length === 0 ? (
+                      <option value="">Đang tải danh mục...</option>
+                    ) : (
+                      categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))
+                    )}
                   </select>
                 </div>
                 <div>
@@ -753,13 +760,18 @@ export default function AdminPlacesPage() {
                 <div>
                   <label className="text-xs font-bold text-gray-700 block mb-1">Loại hình</label>
                   <select
-                    value={editCatId}
-                    onChange={(e) => setEditCatId(Number(e.target.value))}
+                    value={editCatId ?? ''}
+                    onChange={(e) => setEditCatId(e.target.value ? Number(e.target.value) : null)}
+                    required
                     className="w-full p-2.5 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy bg-white"
                   >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                    {categories.length === 0 ? (
+                      <option value="">Đang tải danh mục...</option>
+                    ) : (
+                      categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))
+                    )}
                   </select>
                 </div>
                 <div>

@@ -21,13 +21,10 @@ function SuggestPlaceContent() {
   const { showToast } = useToast();
   const { user } = useAuth();
 
-  const [categories, setCategories] = useState<Category[]>(() => store.getCategories());
+  const [categories, setCategories] = useState<Category[]>([]);
   const [amenities, setAmenities] = useState<Amenity[]>(() => store.getAmenities());
   const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState<number>(() => {
-    const initialCats = store.getCategories();
-    return initialCats.length > 0 ? initialCats[0].id : 1;
-  });
+  const [categoryId, setCategoryId] = useState<number | null>(null);
   const [address, setAddress] = useState('');
   const [lat, setLat] = useState(FTU_COORDINATES.lat);
   const [lng, setLng] = useState(FTU_COORDINATES.lng);
@@ -67,7 +64,7 @@ function SuggestPlaceContent() {
       const cats = store.getCategories();
       if (cats && cats.length > 0) {
         setCategories(cats);
-        setCategoryId((prev) => (cats.some((c) => Number(c.id) === Number(prev)) ? prev : Number(cats[0].id)));
+        setCategoryId((prev) => (prev && cats.some((c) => Number(c.id) === Number(prev))) ? prev : Number(cats[0].id));
       }
       const ams = store.getAmenities();
       if (ams && ams.length > 0) {
@@ -81,7 +78,7 @@ function SuggestPlaceContent() {
       .then((data) => {
         if (data && Array.isArray(data.categories) && data.categories.length > 0) {
           setCategories(data.categories);
-          setCategoryId((prev) => (data.categories.some((c: Category) => Number(c.id) === Number(prev)) ? prev : Number(data.categories[0].id)));
+          setCategoryId((prev) => (prev && data.categories.some((c: Category) => Number(c.id) === Number(prev))) ? prev : Number(data.categories[0].id));
         }
       })
       .catch(() => {});
@@ -282,9 +279,14 @@ function SuggestPlaceContent() {
 
     const chosenAmenities = amenities.filter((a) => selectedAmenityIds.includes(a.id));
     const activeCategories = categories.length > 0 ? categories : store.getCategories();
-    const selectedCategory = activeCategories.find((c) => Number(c.id) === Number(categoryId)) || activeCategories[0];
-    const targetCatId = selectedCategory ? Number(selectedCategory.id) : Number(categoryId);
-    const targetCatName = selectedCategory?.name;
+    const selectedCategory = activeCategories.find((c) => Number(c.id) === Number(categoryId));
+    if (!selectedCategory) {
+      showToast('Vui lòng chọn loại hình địa điểm (danh mục) hợp lệ', 'error');
+      setSubmitting(false);
+      return;
+    }
+    const targetCatId = Number(selectedCategory.id);
+    const targetCatName = selectedCategory.name;
 
     const placePayload = {
       name: name.trim(),
@@ -378,15 +380,20 @@ function SuggestPlaceContent() {
           <div>
             <label className="text-xs font-bold text-gray-700 block mb-1">Loại hình</label>
             <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(Number(e.target.value))}
+              value={categoryId ?? ''}
+              onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : null)}
+              required
               className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy bg-white"
             >
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
+              {categories.length === 0 ? (
+                <option value="">Đang tải danh mục...</option>
+              ) : (
+                categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))
+              )}
             </select>
           </div>
         </div>
