@@ -37,7 +37,17 @@ export default function LoginPage() {
     setLoading(false);
 
     if (!res.success) {
-      const msg = res.message || 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!';
+      let msg = res.message;
+      if (
+        !msg ||
+        msg === '{}' ||
+        msg === '[]' ||
+        msg === '[object Object]' ||
+        msg === 'null' ||
+        msg === 'undefined'
+      ) {
+        msg = 'Tài khoản hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!';
+      }
       setErrorMessage(msg);
       showToast(msg, 'error');
       return;
@@ -83,7 +93,11 @@ export default function LoginPage() {
         {errorMessage && (
           <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2.5 animate-in fade-in">
             <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-500" />
-            <span className="font-medium leading-relaxed">{errorMessage}</span>
+            <span className="font-medium leading-relaxed">
+              {typeof errorMessage === 'string' && errorMessage !== '{}'
+                ? errorMessage
+                : 'Tài khoản hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!'}
+            </span>
           </div>
         )}
 

@@ -1,9 +1,44 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { store } from '@/lib/data/store';
 import { UserProfile, UserRole } from '@/lib/types/database';
+
+export function extractAuthErrorMessage(err: any): string {
+  if (!err) {
+    return 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!';
+  }
+
+  let msg = '';
+  if (typeof err === 'string') {
+    msg = err.trim();
+  } else if (typeof err.message === 'string' && err.message.trim()) {
+    msg = err.message.trim();
+  } else if (typeof err.error_description === 'string' && err.error_description.trim()) {
+    msg = err.error_description.trim();
+  } else if (typeof err.msg === 'string' && err.msg.trim()) {
+    msg = err.msg.trim();
+  } else if (typeof err.description === 'string' && err.description.trim()) {
+    msg = err.description.trim();
+  } else if (err.error && typeof err.error === 'object') {
+    return extractAuthErrorMessage(err.error);
+  }
+
+  // Filter out empty JSON, raw stringified object representations
+  if (
+    !msg ||
+    msg === '{}' ||
+    msg === '[]' ||
+    msg === '[object Object]' ||
+    msg === 'null' ||
+    msg === 'undefined'
+  ) {
+    return 'Tài khoản hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!';
+  }
+
+  return msg;
+}
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -30,6 +65,11 @@ export const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const userRef = useRef<UserProfile | null>(null);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   // Sync user state to browser cookies for Next.js middleware
   const syncCookies = useCallback((usr: UserProfile | null) => {
@@ -88,12 +128,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return null;
           }
 
+          const isUserAdmin = isAdm || dbUser.role === 'admin';
           const resolvedUser: UserProfile = {
             id: dbUser.id,
             full_name: dbUser.full_name || sessionUser.user_metadata?.full_name || userEmail.split('@')[0],
             email: userEmail,
             avatar_url: dbUser.avatar_url || sessionUser.user_metadata?.avatar_url || null,
-            role: (isAdm ? 'admin' : (dbUser.role === 'admin' ? 'admin' : 'student')) as UserRole,
+            role: (isUserAdmin ? 'admin' : 'student') as UserRole,
             is_locked: false,
             created_at: dbUser.created_at || sessionCreatedAt || new Date().toISOString(),
           };
@@ -103,7 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           syncCookies(resolvedUser);
           return resolvedUser;
         } else {
-          // User exists in auth but not yet in public.users -> upsert directly with valid dbRole ('admin' | 'user')
+          // User exists in auth but not yet in public.users -> insert directly with valid dbRole ('admin' | 'user')
           const newUser: UserProfile = {
             id: userId,
             full_name: sessionUser.user_metadata?.full_name || userEmail.split('@')[0],
@@ -115,7 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
 
           try {
-            await supabase.from('users').upsert({
+            await supabase.from('users').insert({
               id: userId,
               full_name: newUser.full_name,
               email: userEmail,
@@ -124,7 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               is_locked: false,
             });
           } catch (e) {
-            console.warn('Upsert public.users fallback notice:', e);
+            console.warn('Insert public.users fallback notice:', e);
           }
 
           store.setCurrentUser(newUser);
@@ -157,14 +198,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       console.warn('Auth refresh warning:', e);
       // Resilience against transient network failure or navigation abort:
-      // If we already have a valid user in store/state, preserve it instead of dropping session
-      const existingUser = user || store.getCurrentUser();
+      // If we already have a valid user in store/ref, preserve it instead of dropping session
+      const existingUser = userRef.current || store.getCurrentUser();
       if (existingUser) {
         return existingUser;
       }
       return null;
     }
-  }, [syncCookies, user]);
+  }, [syncCookies]);
 
   // Initial authentication check on application mount
   useEffect(() => {
@@ -234,6 +275,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let fullName = sessionUser.user_metadata?.full_name || cleanEmail.split('@')[0];
         let avatarUrl = sessionUser.user_metadata?.avatar_url || null;
 
+        let existingDbUser: any = null;
+
         try {
           const { data: dbUser } = await supabase
             .from('users')
@@ -242,8 +285,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .single();
 
           if (dbUser) {
+            existingDbUser = dbUser;
             if (dbUser.is_locked) {
               await supabase.auth.signOut();
+              store.logout();
+              setUser(null);
+              syncCookies(null);
               setIsLoading(false);
               return { success: false, message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.' };
             }
@@ -254,19 +301,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.warn('DB user lookup notice:', dbErr);
         }
 
-        // 3. Upsert role and profile into Supabase public.users
-        const dbRole = isAdm ? 'admin' : 'user';
-        try {
-          await supabase.from('users').upsert({
-            id: sessionUser.id,
-            email: cleanEmail,
-            full_name: fullName,
-            avatar_url: avatarUrl,
-            role: dbRole,
-            is_locked: false,
-          });
-        } catch (upErr) {
-          console.warn('DB upsert notice:', upErr);
+        // Determine effective roles:
+        // In PostgreSQL public.users: role can only be 'admin' or 'user' (never 'student')
+        // In UI UserProfile: role is 'admin' or 'student'
+        const isUserAdmin = isAdm || existingDbUser?.role === 'admin';
+        const finalUiRole: UserRole = isUserAdmin ? 'admin' : 'student';
+        const dbRole = isUserAdmin ? 'admin' : 'user';
+
+        // 3. Only if no record exists in public.users, insert profile (NEVER overwrite existing role)
+        if (!existingDbUser) {
+          try {
+            await supabase.from('users').insert({
+              id: sessionUser.id,
+              email: cleanEmail,
+              full_name: fullName,
+              avatar_url: avatarUrl,
+              role: dbRole,
+              is_locked: false,
+            });
+          } catch (insertErr) {
+            console.warn('DB insert notice:', insertErr);
+          }
         }
 
         const authenticatedUser: UserProfile = {
@@ -274,9 +329,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           full_name: fullName,
           email: cleanEmail,
           avatar_url: avatarUrl,
-          role: targetRole,
+          role: finalUiRole,
           is_locked: false,
-          created_at: sessionUser.created_at,
+          created_at: existingDbUser?.created_at || sessionUser.created_at || new Date().toISOString(),
         };
 
         // 4. Set cookies and client store BEFORE resolving
@@ -285,7 +340,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(authenticatedUser);
         setIsLoading(false);
 
-        return { success: true, role: targetRole };
+        return { success: true, role: finalUiRole };
       }
 
       // 5. Fallback for demo / offline accounts in local store ONLY when Supabase is not configured
@@ -307,10 +362,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      const errorMessage = extractAuthErrorMessage(error);
       setIsLoading(false);
       return {
         success: false,
-        message: error?.message || 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
+        message: errorMessage,
       };
     } catch (err: any) {
       console.error('Login process error:', err);
@@ -333,10 +389,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      const errorMessage = extractAuthErrorMessage(err);
       setIsLoading(false);
       return {
         success: false,
-        message: err?.message || 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
+        message: errorMessage,
       };
     }
   }, [syncCookies]);
