@@ -42,15 +42,6 @@ export function getOpeningStatus(
     };
   }
 
-  if (hours.is_24h) {
-    return {
-      isOpen: true,
-      isLateNight: true,
-      statusText: 'Mở cửa 24/7',
-      todayHoursText: 'Cả ngày (24/7)',
-    };
-  }
-
   // Get current date in Vietnam time
   const now = overrideDate || new Date();
   // Format to VN locale time
@@ -64,7 +55,30 @@ export function getOpeningStatus(
 
   const dayOfWeekIndex = now.getDay(); // 0 is Sunday
   const currentDayKey = DAYS_MAP[dayOfWeekIndex];
+  const activeDays = getOpenDaysFromHours(hours);
+  const isTodayOpen = activeDays.includes(currentDayKey);
   const todaySchedule: DailyHours | undefined = hours[currentDayKey] as DailyHours | undefined;
+
+  // 1. If today is not an operating day or explicitly marked closed
+  if (!isTodayOpen || todaySchedule?.is_closed) {
+    return {
+      isOpen: false,
+      isLateNight: false,
+      statusText: 'Đóng cửa hôm nay',
+      todayHoursText: 'Đóng cửa',
+    };
+  }
+
+  // 2. If 24h per day on an active operating day
+  if (hours.is_24h) {
+    const is24_7 = activeDays.length === 7;
+    return {
+      isOpen: true,
+      isLateNight: true,
+      statusText: is24_7 ? 'Mở cửa 24/7' : 'Mở cửa 24/24 hôm nay',
+      todayHoursText: is24_7 ? 'Cả ngày (24/7)' : 'Cả ngày (24h)',
+    };
+  }
 
   // Check late-night definition: closes at 22:00 or later, overnight, or 24h
   let isLateNight = false;
@@ -76,7 +90,7 @@ export function getOpeningStatus(
     }
   }
 
-  if (!todaySchedule || todaySchedule.is_closed) {
+  if (!todaySchedule) {
     return {
       isOpen: false,
       isLateNight,
@@ -143,7 +157,6 @@ export const ALL_DAY_KEYS: DayKey[] = ['monday', 'tuesday', 'wednesday', 'thursd
  */
 export function getOpenDaysFromHours(hours?: OpeningHours): string[] {
   if (!hours) return [...ALL_DAY_KEYS];
-  if (hours.is_24h) return [...ALL_DAY_KEYS];
 
   if (Array.isArray(hours.open_days) && hours.open_days.length > 0) {
     return hours.open_days;
@@ -163,18 +176,32 @@ export function getOpenDaysFromHours(hours?: OpeningHours): string[] {
 
 /**
  * Formats human-readable summary of opening days for display:
- * - 24/7 -> "Mở cửa 24/7"
- * - All 7 days -> "Mở cửa tất cả các ngày"
+ * - 24/7 -> "Mở cửa 24/7 (Cả tuần)"
+ * - 24h T2-T6 -> "Mở cửa 24h (Thứ 2 – Thứ 6)"
+ * - All 7 days -> "Mở cửa tất cả các ngày (T2 – CN)"
  * - Mon-Fri -> "Mở cửa: Thứ 2 – Thứ 6"
  * - Mon-Sat -> "Mở cửa: Thứ 2 – Thứ 7"
  * - Custom list -> "Mở cửa: Thứ 2, Thứ 4, Thứ 7"
  */
 export function formatOpenDaysText(hours?: OpeningHours): string {
   if (!hours) return 'Mở cửa tất cả các ngày (T2 – CN)';
-  if (hours.is_24h) return 'Mở cửa 24/7';
 
   const openDays = getOpenDaysFromHours(hours);
-  if (openDays.length === 7) return 'Mở cửa tất cả các ngày (T2 – CN)';
+  const isAll7 = openDays.length === 7;
+
+  if (hours.is_24h) {
+    if (isAll7) return 'Mở cửa 24/7 (Cả tuần)';
+    const isT2toT6 =
+      openDays.length === 5 &&
+      ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].every((d) => openDays.includes(d));
+    if (isT2toT6) return 'Mở cửa 24h (Thứ 2 – Thứ 6)';
+    const dayNames = WEEK_DAYS
+      .filter((w) => openDays.includes(w.key))
+      .map((w) => (w.key === 'sunday' ? 'CN' : w.label));
+    return `Mở cửa 24h (${dayNames.join(', ')})`;
+  }
+
+  if (isAll7) return 'Mở cửa tất cả các ngày (T2 – CN)';
   if (openDays.length === 0) return 'Tạm đóng cửa';
 
   // Check if T2–T6 (monday through friday)
@@ -254,7 +281,7 @@ export function parseHoursRangeToSlots(openStr?: string, closeStr?: string): num
 
 /**
  * Returns valid hourly slots (numbers from 0..23) according to the venue's specific opening schedule.
- * - If 24/7: returns all 24 hours [0..23].
+ * - If 24/7 or 24h on active day: returns all 24 hours [0..23].
  * - If open 09:00-22:00: returns [9, 10, ..., 22].
  * - If closed today and not for Admin editing: returns [] (closed today).
  * - If for Admin edit: returns the venue's active open day slots so Admin can configure it.
@@ -265,10 +292,6 @@ export function getValidHourlySlots(
 ): number[] {
   if (!hours) {
     return Array.from({ length: 16 }, (_, i) => i + 7); // Default 7..22
-  }
-
-  if (hours.is_24h) {
-    return Array.from({ length: 24 }, (_, i) => i); // 0..23
   }
 
   const now = options?.targetDate || new Date();
@@ -293,6 +316,11 @@ export function getValidHourlySlots(
   // If today is closed and NOT for admin edit:
   if (!options?.forAdminEdit && (!isTodayOpen || todaySchedule?.is_closed)) {
     return []; // Closed today
+  }
+
+  // If venue operates 24 hours on open days:
+  if (hours.is_24h) {
+    return Array.from({ length: 24 }, (_, i) => i); // 0..23
   }
 
   // If today is open and has schedule:

@@ -261,7 +261,6 @@ function SuggestPlaceContent() {
   };
 
   const handleToggleDay = (dayKey: string) => {
-    if (is24h) return;
     setOpenDays((prev) => {
       if (prev.includes(dayKey)) {
         if (prev.length === 1) {
@@ -305,6 +304,11 @@ function SuggestPlaceContent() {
 
     if (isNaN(finalLat) || finalLat < -90 || finalLat > 90 || isNaN(finalLng) || finalLng < -180 || finalLng > 180) {
       showToast('Tọa độ (Latitude/Longitude) không hợp lệ', 'error');
+      return;
+    }
+
+    if (openDays.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 ngày mở cửa trong tuần', 'error');
       return;
     }
 
@@ -692,17 +696,11 @@ function SuggestPlaceContent() {
               type="checkbox"
               id="de-xuat-is-24h"
               checked={is24h}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setIs24h(checked);
-                if (checked) {
-                  setOpenDays([...ALL_DAY_KEYS]);
-                }
-              }}
+              onChange={(e) => setIs24h(e.target.checked)}
               className="w-4 h-4 text-burgundy rounded border-gray-300 focus:ring-burgundy cursor-pointer"
             />
             <label htmlFor="de-xuat-is-24h" className="text-xs font-bold text-gray-700 cursor-pointer select-none">
-              Mở cửa 24/7 (Phục vụ cả ngày & đêm)
+              Mở cửa 24 giờ / ngày
             </label>
           </div>
 
@@ -712,19 +710,37 @@ function SuggestPlaceContent() {
               Mở cửa vào:
             </label>
             <div className="flex flex-wrap gap-1.5">
+              {/* All 7 days shortcut button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (openDays.length === 7) {
+                    setOpenDays([]);
+                  } else {
+                    setOpenDays([...ALL_DAY_KEYS]);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                  openDays.length === 7
+                    ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-xs'
+                    : 'border-dashed border-gray-300 text-gray-600 hover:bg-slate-50'
+                }`}
+              >
+                {openDays.length === 7 ? '✓ Cả 7 ngày' : '+ Cả 7 ngày'}
+              </button>
+
               {WEEK_DAYS.map((d) => {
                 const isSelected = openDays.includes(d.key);
                 return (
                   <button
                     key={d.key}
                     type="button"
-                    disabled={is24h}
                     onClick={() => handleToggleDay(d.key)}
-                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
                       isSelected
                         ? 'border-burgundy bg-burgundy-light text-burgundy shadow-xs'
                         : 'border-border text-gray-600 hover:bg-slate-50'
-                    } ${is24h ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'}`}
+                    }`}
                   >
                     {d.label}
                   </button>

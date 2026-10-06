@@ -168,6 +168,11 @@ export default function AdminPlacesPage() {
       return;
     }
 
+    if (editOpenDays.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 ngày mở cửa trong tuần', 'error');
+      return;
+    }
+
     const activeCategories = categories.length > 0 ? categories : store.getCategories();
     const selectedCat = activeCategories.find((c) => Number(c.id) === Number(editCatId));
     if (!selectedCat) {
@@ -323,7 +328,6 @@ export default function AdminPlacesPage() {
   };
 
   const handleToggleNewDay = (dayKey: string) => {
-    if (newIs24h) return;
     setNewOpenDays((prev) => {
       if (prev.includes(dayKey)) {
         if (prev.length === 1) {
@@ -352,7 +356,6 @@ export default function AdminPlacesPage() {
   };
 
   const handleToggleEditDay = (dayKey: string) => {
-    if (editIs24h) return;
     setEditOpenDays((prev) => {
       if (prev.includes(dayKey)) {
         if (prev.length === 1) {
@@ -397,6 +400,11 @@ export default function AdminPlacesPage() {
     e.preventDefault();
     if (!newName.trim() || !newAddress.trim()) {
       showToast('Vui lòng điền tên và địa chỉ', 'error');
+      return;
+    }
+
+    if (newOpenDays.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 ngày mở cửa trong tuần', 'error');
       return;
     }
 
@@ -856,17 +864,11 @@ export default function AdminPlacesPage() {
                     type="checkbox"
                     id="admin-add-is-24h"
                     checked={newIs24h}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setNewIs24h(checked);
-                      if (checked) {
-                        setNewOpenDays([...ALL_DAY_KEYS]);
-                      }
-                    }}
+                    onChange={(e) => setNewIs24h(e.target.checked)}
                     className="w-4 h-4 text-burgundy rounded border-gray-300 focus:ring-burgundy cursor-pointer"
                   />
                   <label htmlFor="admin-add-is-24h" className="text-xs font-bold text-gray-700 cursor-pointer select-none">
-                    Mở cửa 24/7 (Phục vụ cả ngày & đêm)
+                    Mở cửa 24 giờ / ngày
                   </label>
                 </div>
 
@@ -876,19 +878,37 @@ export default function AdminPlacesPage() {
                     Mở cửa vào:
                   </label>
                   <div className="flex flex-wrap gap-1.5">
+                    {/* All 7 days shortcut button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newOpenDays.length === 7) {
+                          setNewOpenDays([]);
+                        } else {
+                          setNewOpenDays([...ALL_DAY_KEYS]);
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        newOpenDays.length === 7
+                          ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-xs'
+                          : 'border-dashed border-gray-300 text-gray-600 hover:bg-white'
+                      }`}
+                    >
+                      {newOpenDays.length === 7 ? '✓ Cả 7 ngày' : '+ Cả 7 ngày'}
+                    </button>
+
                     {WEEK_DAYS.map((d) => {
                       const isSelected = newOpenDays.includes(d.key);
                       return (
                         <button
                           key={d.key}
                           type="button"
-                          disabled={newIs24h}
                           onClick={() => handleToggleNewDay(d.key)}
-                          className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
                             isSelected
                               ? 'border-burgundy bg-burgundy-light text-burgundy shadow-xs'
                               : 'border-border text-gray-600 hover:bg-white'
-                          } ${newIs24h ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'}`}
+                          }`}
                         >
                           {d.label}
                         </button>
@@ -1127,17 +1147,11 @@ export default function AdminPlacesPage() {
                     type="checkbox"
                     id="admin-edit-is-24h"
                     checked={editIs24h}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setEditIs24h(checked);
-                      if (checked) {
-                        setEditOpenDays([...ALL_DAY_KEYS]);
-                      }
-                    }}
+                    onChange={(e) => setEditIs24h(e.target.checked)}
                     className="w-4 h-4 text-burgundy rounded border-gray-300 focus:ring-burgundy cursor-pointer"
                   />
                   <label htmlFor="admin-edit-is-24h" className="text-xs font-bold text-gray-700 cursor-pointer select-none">
-                    Mở cửa 24/7 (Phục vụ cả ngày & đêm)
+                    Mở cửa 24 giờ / ngày
                   </label>
                 </div>
 
@@ -1147,19 +1161,37 @@ export default function AdminPlacesPage() {
                     Mở cửa vào:
                   </label>
                   <div className="flex flex-wrap gap-1.5">
+                    {/* All 7 days shortcut button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editOpenDays.length === 7) {
+                          setEditOpenDays([]);
+                        } else {
+                          setEditOpenDays([...ALL_DAY_KEYS]);
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        editOpenDays.length === 7
+                          ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-xs'
+                          : 'border-dashed border-gray-300 text-gray-600 hover:bg-white'
+                      }`}
+                    >
+                      {editOpenDays.length === 7 ? '✓ Cả 7 ngày' : '+ Cả 7 ngày'}
+                    </button>
+
                     {WEEK_DAYS.map((d) => {
                       const isSelected = editOpenDays.includes(d.key);
                       return (
                         <button
                           key={d.key}
                           type="button"
-                          disabled={editIs24h}
                           onClick={() => handleToggleEditDay(d.key)}
-                          className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
                             isSelected
                               ? 'border-burgundy bg-burgundy-light text-burgundy shadow-xs'
                               : 'border-border text-gray-600 hover:bg-white'
-                          } ${editIs24h ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'}`}
+                          }`}
                         >
                           {d.label}
                         </button>

@@ -18,14 +18,45 @@ export async function GET(request: NextRequest) {
   if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
     try {
       const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-      const { data, error } = await supabaseAdmin
+      let data: any = null;
+      const embedRes = await supabaseAdmin
         .from('reviews')
-        .select('*, user:users(full_name, avatar_url)')
+        .select('*, user:users!reviews_user_id_fkey(full_name, avatar_url)')
         .eq('place_id', placeId)
         .eq('is_hidden', false)
         .order('created_at', { ascending: false });
 
-      if (!error && data) {
+      if (!embedRes.error && embedRes.data) {
+        data = embedRes.data;
+      } else {
+        // Fallback: fetch plain reviews and join users to prevent ambiguous relationship errors
+        const plainRes = await supabaseAdmin
+          .from('reviews')
+          .select('*')
+          .eq('place_id', placeId)
+          .eq('is_hidden', false)
+          .order('created_at', { ascending: false });
+
+        if (!plainRes.error && plainRes.data) {
+          const userIds = Array.from(new Set(plainRes.data.map((r: any) => r.user_id).filter(Boolean)));
+          let userMap: Record<string, any> = {};
+          if (userIds.length > 0) {
+            const { data: usersData } = await supabaseAdmin
+              .from('users')
+              .select('id, full_name, avatar_url')
+              .in('id', userIds);
+            if (usersData) {
+              userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+            }
+          }
+          data = plainRes.data.map((r: any) => ({
+            ...r,
+            user: userMap[r.user_id] || null,
+          }));
+        }
+      }
+
+      if (data) {
         return NextResponse.json({ reviews: data, count: data.length });
       }
     } catch (e: any) {
@@ -92,7 +123,7 @@ export async function POST(request: NextRequest) {
             images: images || [],
             is_hidden: false,
           })
-          .select('*, user:users(full_name, avatar_url)')
+          .select('*')
           .single();
 
         if (error) {
@@ -105,7 +136,15 @@ export async function POST(request: NextRequest) {
           console.error('Supabase review insert error:', error.message);
           return NextResponse.json({ success: false, error: error.message }, { status: 500 });
         } else if (data) {
-          createdReview = data;
+          const { data: userData } = await supabaseAdmin
+            .from('users')
+            .select('full_name, avatar_url')
+            .eq('id', user_id)
+            .single();
+          createdReview = {
+            ...data,
+            user: userData || null,
+          };
         }
       } catch (dbErr: any) {
         console.warn('Supabase review insert network notice:', dbErr.message);

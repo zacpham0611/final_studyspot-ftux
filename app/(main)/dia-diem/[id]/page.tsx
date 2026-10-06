@@ -84,16 +84,46 @@ export default function PlaceDetailPage() {
     setPlace(p);
 
     try {
-      const { data: supaReviews, error } = await supabase
+      let supaReviews: any[] | null = null;
+      const { data, error } = await supabase
         .from('reviews')
         .select(`
           *,
-          user:users(full_name, avatar_url)
+          user:users!reviews_user_id_fkey(full_name, avatar_url)
         `)
         .eq('place_id', placeId)
         .order('created_at', { ascending: false });
 
-      if (!error && supaReviews) {
+      if (!error && data) {
+        supaReviews = data;
+      } else {
+        // Fallback: fetch reviews and join users to prevent ambiguous relationship errors
+        const { data: plainReviews, error: plainErr } = await supabase
+          .from('reviews')
+          .select('*')
+          .eq('place_id', placeId)
+          .order('created_at', { ascending: false });
+
+        if (!plainErr && plainReviews) {
+          const userIds = Array.from(new Set(plainReviews.map((r: any) => r.user_id).filter(Boolean)));
+          let userMap: Record<string, any> = {};
+          if (userIds.length > 0) {
+            const { data: usersData } = await supabase
+              .from('users')
+              .select('id, full_name, avatar_url')
+              .in('id', userIds);
+            if (usersData) {
+              userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+            }
+          }
+          supaReviews = plainReviews.map((r: any) => ({
+            ...r,
+            user: userMap[r.user_id] || null,
+          }));
+        }
+      }
+
+      if (supaReviews) {
         setReviews(supaReviews as any);
         store.syncPlaceReviews(placeId, supaReviews as any);
       } else {

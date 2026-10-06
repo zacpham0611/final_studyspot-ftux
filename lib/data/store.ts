@@ -276,7 +276,7 @@ class StudySpotStore {
       ] = await Promise.all([
         supabase.from('users').select('*').order('created_at', { ascending: false }),
         supabase.from('places').select('*'),
-        supabase.from('reviews').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
+        supabase.from('reviews').select('*, user:users!reviews_user_id_fkey(full_name, avatar_url)').order('created_at', { ascending: false }),
         supabase.from('checkins').select('*, user:users(full_name, avatar_url)').order('created_at', { ascending: false }),
         supabase.from('favorites').select('*'),
         supabase.from('notifications').select('*').order('created_at', { ascending: false }),
@@ -337,6 +337,31 @@ class StudySpotStore {
 
       if (reviewsRes.data && reviewsRes.data.length > 0) {
         this.reviews = reviewsRes.data;
+      } else {
+        // Resilient fallback if relationship embedding encounters schema notice
+        try {
+          const { data: fallbackReviews } = await supabase
+            .from('reviews')
+            .select('*')
+            .order('created_at', { ascending: false });
+          if (fallbackReviews && fallbackReviews.length > 0) {
+            const userIds = Array.from(new Set(fallbackReviews.map((r: any) => r.user_id).filter(Boolean)));
+            let userMap: Record<string, any> = {};
+            if (userIds.length > 0) {
+              const { data: usersData } = await supabase
+                .from('users')
+                .select('id, full_name, avatar_url')
+                .in('id', userIds);
+              if (usersData) {
+                userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+              }
+            }
+            this.reviews = fallbackReviews.map((r: any) => ({
+              ...r,
+              user: userMap[r.user_id] || null,
+            }));
+          }
+        } catch (e) {}
       }
 
       if (checkinsRes.data) {
