@@ -42,12 +42,26 @@ export function CheckinModal({
 
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let token: string | null = null;
       try {
         const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session?.access_token) {
-          headers['Authorization'] = `Bearer ${sessionData.session.access_token}`;
+        token = sessionData?.session?.access_token || null;
+        if (!token) {
+          const { data: refreshData } = await supabase.auth.refreshSession();
+          token = refreshData?.session?.access_token || null;
+        }
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
         }
       } catch (authErr) {}
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[CHECKIN DEBUG client]', {
+          hasUser: Boolean(user),
+          userId: user?.id,
+          hasToken: Boolean(token),
+        });
+      }
 
       // 1. Submit via server API route
       const res = await fetch('/api/checkins', {

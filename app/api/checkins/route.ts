@@ -110,6 +110,17 @@ export async function POST(request: NextRequest) {
         } catch (cookieErr) {}
       }
 
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[CHECKIN DEBUG server]', {
+          hasAuthHeader: Boolean(authHeader),
+          hasBearerToken: Boolean(token),
+          bearerVerified: Boolean(token && authenticatedUserId),
+          hasSsrUser: Boolean(!token && authenticatedUserId),
+          authenticatedUserId,
+          providedUserId: userId,
+        });
+      }
+
       // 1c. If user is not authenticated through Supabase Auth, reject immediately
       if (!authenticatedUserId) {
         return NextResponse.json(
