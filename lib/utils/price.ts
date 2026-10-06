@@ -3,6 +3,7 @@
  */
 
 export const PRICE_RANGES = [
+  'Miễn phí',
   'Dưới 30.000đ',
   '30.000đ – 50.000đ',
   '50.000đ – 80.000đ',
@@ -21,6 +22,7 @@ export interface PriceRangeOption {
 }
 
 export const PRICE_RANGE_OPTIONS: PriceRangeOption[] = [
+  { value: 'Miễn phí', label: 'Miễn phí', subLabel: '0đ / Không mất phí', level: 1 },
   { value: 'Dưới 30.000đ', label: 'Dưới 30.000đ', subLabel: 'Giá sinh viên', level: 1 },
   { value: '30.000đ – 50.000đ', label: '30.000đ – 50.000đ', level: 2 },
   { value: '50.000đ – 80.000đ', label: '50.000đ – 80.000đ', level: 3 },
@@ -58,7 +60,7 @@ export function getPriceRangesFromPlace(place?: {
  */
 export function calculatePriceLevel(priceRanges: string[]): number {
   if (!priceRanges || priceRanges.length === 0) return 2;
-  if (priceRanges.some((r) => r.includes('< 30') || r.includes('Dưới 30'))) return 1;
+  if (priceRanges.some((r) => r.toLowerCase().includes('miễn phí') || r.includes('0đ') || r.includes('< 30') || r.includes('Dưới 30'))) return 1;
   if (priceRanges.some((r) => r.includes('30.000') || r.includes('30k'))) return 2;
   if (priceRanges.some((r) => r.includes('50.000') || r.includes('80.000') || r.includes('50k') || r.includes('80k'))) return 3;
   if (priceRanges.some((r) => r.includes('120') || r.includes('200') || r.includes('Trên'))) return 4;

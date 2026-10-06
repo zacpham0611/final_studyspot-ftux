@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { store } from '@/lib/data/store';
 import { Place, Category, OpeningHours, Amenity } from '@/lib/types/database';
-import { WEEK_DAYS, ALL_DAY_KEYS, getOpenDaysFromHours } from '@/lib/utils/hours';
+import { WEEK_DAYS, ALL_DAY_KEYS, getOpenDaysFromHours, getDayIntervals, TimeInterval } from '@/lib/utils/hours';
 import { PRICE_RANGE_OPTIONS, calculatePriceLevel, getPriceRangesFromPlace } from '@/lib/utils/price';
 import { useToast } from '@/components/common/Toast';
 import { 
@@ -43,6 +43,7 @@ export default function AdminPlacesPage() {
   const [editOpenDays, setEditOpenDays] = useState<string[]>([...ALL_DAY_KEYS]);
   const [editOpenTime, setEditOpenTime] = useState('07:30');
   const [editCloseTime, setEditCloseTime] = useState('22:30');
+  const [editIntervals, setEditIntervals] = useState<TimeInterval[]>([{ open: '07:30', close: '22:30' }]);
   const [editPriceRanges, setEditPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
   const [editSelectedAmenityIds, setEditSelectedAmenityIds] = useState<number[]>([]);
   const [editStatus, setEditStatus] = useState<Place['status']>('approved');
@@ -66,6 +67,7 @@ export default function AdminPlacesPage() {
   const [newOpenDays, setNewOpenDays] = useState<string[]>([...ALL_DAY_KEYS]);
   const [newOpenTime, setNewOpenTime] = useState('07:30');
   const [newCloseTime, setNewCloseTime] = useState('22:30');
+  const [newIntervals, setNewIntervals] = useState<TimeInterval[]>([{ open: '07:30', close: '22:30' }]);
   const [newPriceRanges, setNewPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
   const [newSelectedAmenityIds, setNewSelectedAmenityIds] = useState<number[]>([1, 2, 4]);
   const [newStatus, setNewStatus] = useState<Place['status']>('approved');
@@ -153,12 +155,38 @@ export default function AdminPlacesPage() {
     const days = getOpenDaysFromHours(place.opening_hours);
     setEditOpenDays(days);
     const day = place.opening_hours?.monday || place.opening_hours?.tuesday || place.opening_hours?.sunday;
-    setEditOpenTime(day?.open && day.open !== '00:00' ? day.open : '07:30');
-    setEditCloseTime(day?.close && day.close !== '23:59' ? day.close : '22:30');
+    const intervals = getDayIntervals(day);
+    if (intervals.length > 0) {
+      setEditIntervals(intervals);
+      setEditOpenTime(intervals[0].open);
+      setEditCloseTime(intervals[intervals.length - 1].close);
+    } else {
+      const defOpen = day?.open && day.open !== '00:00' ? day.open : '07:30';
+      const defClose = day?.close && day.close !== '23:59' ? day.close : '22:30';
+      setEditIntervals([{ open: defOpen, close: defClose }]);
+      setEditOpenTime(defOpen);
+      setEditCloseTime(defClose);
+    }
     const ranges = getPriceRangesFromPlace(place);
     setEditPriceRanges(ranges);
-    setEditSelectedAmenityIds(place.amenities?.map((a) => a.id) || []);
+    const initialAmenityIds = (place.amenities?.map((a) => Number(a.id)) || []).filter((id) => !isNaN(id));
+    setEditSelectedAmenityIds(initialAmenityIds);
     setEditStatus(place.status || 'approved');
+
+    // Authoritative check: if place.amenities is not yet populated, fetch fresh mapping
+    if (initialAmenityIds.length === 0 && place.id) {
+      fetch(`/api/places?id=${encodeURIComponent(place.id)}`, { cache: 'no-store' })
+        .then((res) => res.json())
+        .then((data) => {
+          const fresh = data.place || (Array.isArray(data.places) ? data.places[0] : null);
+          if (fresh && Array.isArray(fresh.amenities) && fresh.amenities.length > 0) {
+            const freshIds = fresh.amenities.map((a: any) => Number(a.id)).filter((id: number) => !isNaN(id));
+            setEditSelectedAmenityIds(freshIds);
+            store.savePlace(fresh);
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -184,20 +212,32 @@ export default function AdminPlacesPage() {
 
     const calculatedPriceLevel = calculatePriceLevel(editPriceRanges);
 
+    const validIntervals = editIntervals.filter((i) => i.open && i.close);
+    const primaryOpen = editIs24h ? '00:00' : (validIntervals[0]?.open || editOpenTime || '07:30');
+    const primaryClose = editIs24h ? '23:59' : (validIntervals[validIntervals.length - 1]?.close || editCloseTime || '22:30');
+    const dayIntervals = editIs24h ? [{ open: '00:00', close: '23:59' }] : validIntervals;
+
+    const createDaySchedule = (dayKey: string) => ({
+      open: primaryOpen,
+      close: primaryClose,
+      is_closed: !editOpenDays.includes(dayKey),
+      intervals: !editOpenDays.includes(dayKey) ? [] : dayIntervals,
+    });
+
     const openingHours: OpeningHours = {
       is_24h: editIs24h,
       open_days: editOpenDays,
       price_ranges: editPriceRanges,
-      monday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('monday') },
-      tuesday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('tuesday') },
-      wednesday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('wednesday') },
-      thursday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('thursday') },
-      friday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('friday') },
-      saturday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('saturday') },
-      sunday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('sunday') },
+      monday: createDaySchedule('monday'),
+      tuesday: createDaySchedule('tuesday'),
+      wednesday: createDaySchedule('wednesday'),
+      thursday: createDaySchedule('thursday'),
+      friday: createDaySchedule('friday'),
+      saturday: createDaySchedule('saturday'),
+      sunday: createDaySchedule('sunday'),
     };
 
-    const selectedAmenities = availableAmenities.filter((a) => editSelectedAmenityIds.includes(a.id));
+    const selectedAmenities = availableAmenities.filter((a) => editSelectedAmenityIds.includes(Number(a.id)));
 
     const editPayload: any = {
       name: editName.trim(),
@@ -419,17 +459,29 @@ export default function AdminPlacesPage() {
 
     const calculatedPriceLevel = calculatePriceLevel(newPriceRanges);
 
+    const validIntervals = newIntervals.filter((i) => i.open && i.close);
+    const primaryOpen = newIs24h ? '00:00' : (validIntervals[0]?.open || newOpenTime || '07:30');
+    const primaryClose = newIs24h ? '23:59' : (validIntervals[validIntervals.length - 1]?.close || newCloseTime || '22:30');
+    const dayIntervals = newIs24h ? [{ open: '00:00', close: '23:59' }] : validIntervals;
+
+    const createNewDaySchedule = (dayKey: string) => ({
+      open: primaryOpen,
+      close: primaryClose,
+      is_closed: !newOpenDays.includes(dayKey),
+      intervals: !newOpenDays.includes(dayKey) ? [] : dayIntervals,
+    });
+
     const openingHours: OpeningHours = {
       is_24h: newIs24h,
       open_days: newOpenDays,
       price_ranges: newPriceRanges,
-      monday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('monday') },
-      tuesday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('tuesday') },
-      wednesday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('wednesday') },
-      thursday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('thursday') },
-      friday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('friday') },
-      saturday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('saturday') },
-      sunday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('sunday') },
+      monday: createNewDaySchedule('monday'),
+      tuesday: createNewDaySchedule('tuesday'),
+      wednesday: createNewDaySchedule('wednesday'),
+      thursday: createNewDaySchedule('thursday'),
+      friday: createNewDaySchedule('friday'),
+      saturday: createNewDaySchedule('saturday'),
+      sunday: createNewDaySchedule('sunday'),
     };
 
     const selectedAmenities = availableAmenities.filter((a) => newSelectedAmenityIds.includes(a.id));
@@ -917,32 +969,70 @@ export default function AdminPlacesPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-600 block mb-1">Giờ mở cửa</label>
-                    <input
-                      type="time"
-                      disabled={newIs24h}
-                      value={newIs24h ? '00:00' : newOpenTime}
-                      onChange={(e) => setNewOpenTime(e.target.value)}
-                      className={`w-full p-2 rounded-lg border border-border text-xs focus:outline-none focus:border-burgundy ${
-                        newIs24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white'
-                      }`}
-                    />
+                {newIs24h ? (
+                  <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-800 text-xs font-medium">
+                    Địa điểm mở cửa liên tục 24/24 vào các ngày đã chọn.
                   </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-600 block mb-1">Giờ đóng cửa</label>
-                    <input
-                      type="time"
-                      disabled={newIs24h}
-                      value={newIs24h ? '23:59' : newCloseTime}
-                      onChange={(e) => setNewCloseTime(e.target.value)}
-                      className={`w-full p-2 rounded-lg border border-border text-xs focus:outline-none focus:border-burgundy ${
-                        newIs24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white'
-                      }`}
-                    />
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-gray-700 block">
+                        Khung giờ hoạt động trong ngày:
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setNewIntervals([...newIntervals, { open: '13:30', close: '17:00' }])}
+                        className="text-[11px] font-bold text-burgundy hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        + Thêm khung giờ
+                      </button>
+                    </div>
+                    {newIntervals.map((interval, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <input
+                            type="time"
+                            value={interval.open}
+                            onChange={(e) => {
+                              const updated = [...newIntervals];
+                              updated[idx] = { ...updated[idx], open: e.target.value };
+                              setNewIntervals(updated);
+                              if (idx === 0) setNewOpenTime(e.target.value);
+                            }}
+                            className="w-full p-2 rounded-lg border border-border text-xs bg-white focus:outline-none focus:border-burgundy"
+                          />
+                        </div>
+                        <span className="text-gray-400 text-xs font-bold">—</span>
+                        <div className="flex-1">
+                          <input
+                            type="time"
+                            value={interval.close}
+                            onChange={(e) => {
+                              const updated = [...newIntervals];
+                              updated[idx] = { ...updated[idx], close: e.target.value };
+                              setNewIntervals(updated);
+                              if (idx === newIntervals.length - 1) setNewCloseTime(e.target.value);
+                            }}
+                            className="w-full p-2 rounded-lg border border-border text-xs bg-white focus:outline-none focus:border-burgundy"
+                          />
+                        </div>
+                        {newIntervals.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = newIntervals.filter((_, i) => i !== idx);
+                              setNewIntervals(updated);
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                            title="Xóa khung giờ này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
 
               <div>
@@ -974,7 +1064,7 @@ export default function AdminPlacesPage() {
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {availableAmenities.map((am) => {
-                    const checked = newSelectedAmenityIds.includes(am.id);
+                    const checked = newSelectedAmenityIds.includes(Number(am.id));
                     return (
                       <button
                         key={am.id}
@@ -1200,32 +1290,70 @@ export default function AdminPlacesPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-600 block mb-1">Giờ mở cửa</label>
-                    <input
-                      type="time"
-                      disabled={editIs24h}
-                      value={editIs24h ? '00:00' : editOpenTime}
-                      onChange={(e) => setEditOpenTime(e.target.value)}
-                      className={`w-full p-2 rounded-lg border border-border text-xs focus:outline-none focus:border-burgundy ${
-                        editIs24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white'
-                      }`}
-                    />
+                {editIs24h ? (
+                  <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-800 text-xs font-medium">
+                    Địa điểm mở cửa liên tục 24/24 vào các ngày đã chọn.
                   </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-600 block mb-1">Giờ đóng cửa</label>
-                    <input
-                      type="time"
-                      disabled={editIs24h}
-                      value={editIs24h ? '23:59' : editCloseTime}
-                      onChange={(e) => setEditCloseTime(e.target.value)}
-                      className={`w-full p-2 rounded-lg border border-border text-xs focus:outline-none focus:border-burgundy ${
-                        editIs24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white'
-                      }`}
-                    />
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-gray-700 block">
+                        Khung giờ hoạt động trong ngày:
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setEditIntervals([...editIntervals, { open: '13:30', close: '17:00' }])}
+                        className="text-[11px] font-bold text-burgundy hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        + Thêm khung giờ
+                      </button>
+                    </div>
+                    {editIntervals.map((interval, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <input
+                            type="time"
+                            value={interval.open}
+                            onChange={(e) => {
+                              const updated = [...editIntervals];
+                              updated[idx] = { ...updated[idx], open: e.target.value };
+                              setEditIntervals(updated);
+                              if (idx === 0) setEditOpenTime(e.target.value);
+                            }}
+                            className="w-full p-2 rounded-lg border border-border text-xs bg-white focus:outline-none focus:border-burgundy"
+                          />
+                        </div>
+                        <span className="text-gray-400 text-xs font-bold">—</span>
+                        <div className="flex-1">
+                          <input
+                            type="time"
+                            value={interval.close}
+                            onChange={(e) => {
+                              const updated = [...editIntervals];
+                              updated[idx] = { ...updated[idx], close: e.target.value };
+                              setEditIntervals(updated);
+                              if (idx === editIntervals.length - 1) setEditCloseTime(e.target.value);
+                            }}
+                            className="w-full p-2 rounded-lg border border-border text-xs bg-white focus:outline-none focus:border-burgundy"
+                          />
+                        </div>
+                        {editIntervals.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = editIntervals.filter((_, i) => i !== idx);
+                              setEditIntervals(updated);
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                            title="Xóa khung giờ này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
 
               <div>
@@ -1260,7 +1388,7 @@ export default function AdminPlacesPage() {
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {availableAmenities.map((am) => {
-                    const checked = editSelectedAmenityIds.includes(am.id);
+                    const checked = editSelectedAmenityIds.includes(Number(am.id));
                     return (
                       <button
                         key={am.id}

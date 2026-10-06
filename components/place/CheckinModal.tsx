@@ -53,6 +53,7 @@ export function CheckinModal({
       const res = await fetch('/api/checkins', {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify({
           placeId,
           level,

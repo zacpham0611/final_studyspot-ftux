@@ -8,6 +8,7 @@ export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
+  const placeId = searchParams.get('id') || undefined;
   const query = searchParams.get('q') || undefined;
   const categoryId = searchParams.get('category') ? Number(searchParams.get('category')) : undefined;
   const includeAll = searchParams.get('all') === '1';
@@ -24,7 +25,9 @@ export async function GET(request: NextRequest) {
         auth: { persistSession: false },
       });
       let q = supabaseAdmin.from('places').select('*');
-      if (createdBy) {
+      if (placeId) {
+        q = q.eq('id', placeId);
+      } else if (createdBy) {
         q = q.eq('created_by', createdBy);
       } else if (statusParam) {
         q = q.eq('status', statusParam);
@@ -37,8 +40,43 @@ export async function GET(request: NextRequest) {
       q = q.order('created_at', { ascending: false });
       const { data, error } = await q;
       if (!error && data) {
+        // Fetch place_amenities mapping for these places
+        const placeIds = data.map((dp: any) => dp.id).filter(Boolean);
+        let placeAmenitiesMap: Record<string, any[]> = {};
+        if (placeIds.length > 0) {
+          try {
+            const [paRes, amRes] = await Promise.all([
+              supabaseAdmin.from('place_amenities').select('place_id, amenity_id').in('place_id', placeIds),
+              supabaseAdmin.from('amenities').select('*').order('id', { ascending: true }),
+            ]);
+
+            const allAmenities = (amRes.data && amRes.data.length > 0) ? amRes.data : store.getAmenities();
+            const amMap = new Map<number, any>();
+            for (const am of allAmenities) {
+              amMap.set(Number(am.id), am);
+            }
+
+            if (paRes.data && Array.isArray(paRes.data)) {
+              for (const row of paRes.data) {
+                const pId = String(row.place_id);
+                const aId = Number(row.amenity_id);
+                const matchedAmenity = amMap.get(aId);
+                if (matchedAmenity) {
+                  if (!placeAmenitiesMap[pId]) {
+                    placeAmenitiesMap[pId] = [];
+                  }
+                  placeAmenitiesMap[pId].push(matchedAmenity);
+                }
+              }
+            }
+          } catch (paErr) {
+            console.warn('GET /api/places place_amenities mapping notice:', paErr);
+          }
+        }
+
         let places = data.map((dp: any) => {
           const parsedHours = typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : dp.opening_hours;
+          const resolvedAmenities = placeAmenitiesMap[dp.id] || (Array.isArray(dp.amenities) ? dp.amenities : []);
           return {
             ...dp,
             opening_hours: parsedHours,
@@ -46,6 +84,7 @@ export async function GET(request: NextRequest) {
             price_level: dp.price_level || 2,
             images: dp.images || [],
             view_count: dp.view_count || 0,
+            amenities: resolvedAmenities,
           };
         });
 
@@ -59,7 +98,7 @@ export async function GET(request: NextRequest) {
         }
 
         return NextResponse.json(
-          { places, count: places.length },
+          { places, place: places[0] || null, count: places.length },
           { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
         );
       }
@@ -73,14 +112,17 @@ export async function GET(request: NextRequest) {
     ? store.getAllPlacesAdmin() 
     : store.filterPlaces({ query, categoryId });
 
-  if (createdBy) {
+  if (placeId) {
+    const single = store.getPlaceById(placeId);
+    places = single ? [single] : [];
+  } else if (createdBy) {
     places = store.getAllPlacesAdmin().filter((p: any) => p.created_by === createdBy);
   } else if (statusParam) {
     places = places.filter((p: any) => p.status === statusParam);
   }
 
   return NextResponse.json(
-    { places, count: places.length },
+    { places, place: places[0] || null, count: places.length },
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
   );
 }
@@ -419,6 +461,7 @@ export async function PATCH(request: NextRequest) {
     if (lng !== undefined) editFields.lng = Number(lng);
     if (description !== undefined) editFields.description = description;
     if (price_level !== undefined) editFields.price_level = price_level;
+    if (body.price_ranges !== undefined) editFields.price_ranges = body.price_ranges;
     if (images !== undefined) editFields.images = images;
     if (opening_hours !== undefined) editFields.opening_hours = opening_hours;
 

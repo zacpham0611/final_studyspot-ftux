@@ -29,10 +29,16 @@ export interface Amenity {
   icon: string;
 }
 
+export interface TimeInterval {
+  open: string;  // "08:00"
+  close: string; // "11:45"
+}
+
 export interface DailyHours {
   open: string;  // "07:00"
   close: string; // "23:00"
   is_closed?: boolean;
+  intervals?: TimeInterval[];
 }
 
 export interface OpeningHours {

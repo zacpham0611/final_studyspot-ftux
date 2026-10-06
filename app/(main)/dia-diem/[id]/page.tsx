@@ -16,7 +16,7 @@ import { useToast } from '@/components/common/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase/client';
 import { formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
-import { formatOpenDaysText, getOpenDaysFromHours } from '@/lib/utils/hours';
+import { formatOpenDaysText, getOpenDaysFromHours, formatDayIntervals } from '@/lib/utils/hours';
 import { getPriceRangesFromPlace } from '@/lib/utils/price';
 import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { 
@@ -41,6 +41,7 @@ import {
   Edit2,
   ThumbsUp,
   Flag,
+  Sparkles,
   X
 } from 'lucide-react';
 
@@ -79,9 +80,44 @@ export default function PlaceDetailPage() {
   const { user: currentUser } = useAuth();
 
   const refreshData = async () => {
-    const p = store.getPlaceById(placeId);
+    let p = store.getPlaceById(placeId);
+    if (p) {
+      setPlace(p);
+    }
+
+    // 1. Authoritative fetch of fresh place from API to ensure complete amenities mapping
+    try {
+      const placeRes = await fetch(`/api/places?id=${encodeURIComponent(placeId)}`, { cache: 'no-store' });
+      if (placeRes.ok) {
+        const placeJson = await placeRes.json();
+        const freshPlace = placeJson.place || (Array.isArray(placeJson.places) ? placeJson.places[0] : null);
+        if (freshPlace) {
+          p = freshPlace;
+          setPlace(freshPlace);
+          store.savePlace(freshPlace);
+        }
+      }
+    } catch (placeErr) {}
+
+    // Fallback: direct Supabase query for place_amenities if p has no amenities
+    if (p && (!p.amenities || p.amenities.length === 0)) {
+      try {
+        const { data: paData } = await supabase
+          .from('place_amenities')
+          .select('amenity_id, amenity:amenities(*)')
+          .eq('place_id', placeId);
+        if (paData && Array.isArray(paData) && paData.length > 0) {
+          const loadedAms = paData.map((r: any) => r.amenity).filter(Boolean);
+          if (loadedAms.length > 0) {
+            p = { ...p, amenities: loadedAms };
+            setPlace(p);
+            store.savePlace(p);
+          }
+        }
+      } catch (e) {}
+    }
+
     if (!p) return;
-    setPlace(p);
 
     try {
       let supaReviews: any[] | null = null;
@@ -340,8 +376,8 @@ export default function PlaceDetailPage() {
   const currentCrowdLabel = realTimeCrowd.status !== 'unknown' ? realTimeCrowd.label : (place.crowd_label || 'Chưa có dữ liệu');
   const currentCrowdScore = realTimeCrowd.score !== null ? realTimeCrowd.score : place.crowd_score;
 
-  const priceSymbol = '$'.repeat(place.price_level || 2);
   const placePriceRanges = getPriceRangesFromPlace(place);
+  const priceSymbol = placePriceRanges.length === 1 && placePriceRanges[0] === 'Miễn phí' ? '0đ' : '$'.repeat(place.price_level || 2);
   const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
   const openDaysSummary = formatOpenDaysText(place.opening_hours);
 
@@ -515,26 +551,31 @@ export default function PlaceDetailPage() {
           {/* Amenities Grid */}
           <div className="bg-white p-6 rounded-2xl border border-border shadow-soft space-y-4">
             <h3 className="text-base font-bold text-gray-900">Tiện ích học tập có sẵn</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {place.amenities?.map((am) => (
-                <div
-                  key={am.id}
-                  className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-border/80 text-xs font-semibold text-gray-800"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-burgundy-light text-burgundy flex items-center justify-center flex-shrink-0">
-                    {am.id === 1 && <Wifi className="w-4 h-4" />}
-                    {am.id === 2 && <Zap className="w-4 h-4" />}
-                    {am.id === 3 && <Users className="w-4 h-4" />}
-                    {am.id === 4 && <VolumeX className="w-4 h-4" />}
-                    {am.id === 5 && <Wind className="w-4 h-4" />}
-                    {am.id === 6 && <Bike className="w-4 h-4" />}
-                    {am.id === 7 && <Tag className="w-4 h-4" />}
-                    {am.id === 8 && <Moon className="w-4 h-4" />}
+            {(!place.amenities || place.amenities.length === 0) ? (
+              <p className="text-xs text-gray-400 italic py-1">Địa điểm này chưa được cập nhật danh sách tiện ích học tập.</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {place.amenities.map((am) => (
+                  <div
+                    key={am.id}
+                    className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-border/80 text-xs font-semibold text-gray-800"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-burgundy-light text-burgundy flex items-center justify-center flex-shrink-0">
+                      {am.id === 1 && <Wifi className="w-4 h-4" />}
+                      {am.id === 2 && <Zap className="w-4 h-4" />}
+                      {am.id === 3 && <Users className="w-4 h-4" />}
+                      {am.id === 4 && <VolumeX className="w-4 h-4" />}
+                      {am.id === 5 && <Wind className="w-4 h-4" />}
+                      {am.id === 6 && <Bike className="w-4 h-4" />}
+                      {am.id === 7 && <Tag className="w-4 h-4" />}
+                      {am.id === 8 && <Moon className="w-4 h-4" />}
+                      {(typeof am.id !== 'number' || am.id < 1 || am.id > 8) && <Sparkles className="w-4 h-4" />}
+                    </div>
+                    <span>{am.name}</span>
                   </div>
-                  <span>{am.name}</span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* REVIEWS & RATINGS SECTION */}
@@ -817,18 +858,17 @@ export default function PlaceDetailPage() {
                   { key: 'sunday', day: 'Chủ Nhật', schedule: place.opening_hours?.sunday },
                 ].map((item, idx) => {
                   const isDayClosed = !activeOpenDays.includes(item.key) || item.schedule?.is_closed;
+                  const intervalsText = formatDayIntervals(item.schedule);
                   return (
-                    <div key={idx} className="flex justify-between py-1 border-b border-gray-100 last:border-none">
-                      <span className="text-gray-600">{item.day}</span>
-                      {isDayClosed ? (
+                    <div key={idx} className="flex justify-between items-center py-1 border-b border-gray-100 last:border-none gap-2">
+                      <span className="text-gray-600 flex-shrink-0">{item.day}</span>
+                      {isDayClosed || intervalsText === 'Nghỉ' ? (
                         <span className="font-semibold text-rose-500 bg-rose-50 px-2 py-0.5 rounded text-[11px]">
                           Nghỉ
                         </span>
                       ) : (
-                        <span className="font-semibold text-gray-900">
-                          {item.schedule?.open && item.schedule?.close
-                            ? `${item.schedule.open} - ${item.schedule.close}`
-                            : '07:00 - 23:00'}
+                        <span className="font-semibold text-gray-900 text-right text-xs">
+                          {intervalsText}
                         </span>
                       )}
                     </div>

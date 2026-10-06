@@ -1,4 +1,6 @@
-import { OpeningHours, DailyHours } from '@/lib/types/database';
+import { OpeningHours, DailyHours, TimeInterval } from '@/lib/types/database';
+
+export type { TimeInterval };
 
 export interface PlaceHoursStatus {
   isOpen: boolean;
@@ -23,6 +25,55 @@ const DAYS_MAP: (keyof OpeningHours)[] = [
 function parseTimeToMinutes(timeStr: string): number {
   const [h, m] = timeStr.split(':').map(Number);
   return h * 60 + (m || 0);
+}
+
+/**
+ * Extract an array of valid TimeIntervals from a daily schedule or interval array.
+ */
+export function getDayIntervals(schedule?: DailyHours | TimeInterval[] | null): TimeInterval[] {
+  if (!schedule) return [];
+
+  if (Array.isArray(schedule)) {
+    return schedule.filter((i) => i && typeof i.open === 'string' && typeof i.close === 'string');
+  }
+
+  if (schedule.intervals && Array.isArray(schedule.intervals) && schedule.intervals.length > 0) {
+    return schedule.intervals.filter((i) => i && typeof i.open === 'string' && typeof i.close === 'string');
+  }
+
+  if (schedule.open && schedule.close && !schedule.is_closed) {
+    return [{ open: schedule.open, close: schedule.close }];
+  }
+
+  return [];
+}
+
+/**
+ * Format daily intervals into user-friendly text:
+ * - Single interval: "07:30 - 22:30"
+ * - Multiple intervals: "08:00 - 11:45, 13:30 - 17:00"
+ * - Closed: "Nghỉ"
+ */
+export function formatDayIntervals(schedule?: DailyHours | TimeInterval[] | null): string {
+  const intervals = getDayIntervals(schedule);
+  if (intervals.length === 0) return 'Nghỉ';
+  return intervals.map((i) => `${i.open} - ${i.close}`).join(', ');
+}
+
+/**
+ * Determines whether a time (in minutes from midnight) is within a specific interval.
+ * Supports standard daytime shifts and overnight shifts (e.g. 18:00 - 02:00).
+ */
+export function isTimeInInterval(currentMinutes: number, interval: TimeInterval): boolean {
+  const openMins = parseTimeToMinutes(interval.open);
+  const closeMins = parseTimeToMinutes(interval.close);
+
+  if (closeMins < openMins) {
+    // Overnight shift: e.g. 18:00 to 02:00 next day
+    return currentMinutes >= openMins || currentMinutes < closeMins;
+  }
+  // Regular daytime shift: e.g. 08:00 to 11:45
+  return currentMinutes >= openMins && currentMinutes < closeMins;
 }
 
 /**
@@ -80,52 +131,59 @@ export function getOpeningStatus(
     };
   }
 
-  // Check late-night definition: closes at 22:00 or later, overnight, or 24h
-  let isLateNight = false;
-  if (todaySchedule && !todaySchedule.is_closed) {
-    const closeMins = parseTimeToMinutes(todaySchedule.close);
-    const openMins = parseTimeToMinutes(todaySchedule.open);
-    if (closeMins >= 22 * 60 || closeMins < openMins) {
-      isLateNight = true;
-    }
-  }
-
-  if (!todaySchedule) {
+  const todayIntervals = getDayIntervals(todaySchedule);
+  if (todayIntervals.length === 0) {
     return {
       isOpen: false,
-      isLateNight,
+      isLateNight: false,
       statusText: 'Đóng cửa hôm nay',
       todayHoursText: 'Đóng cửa',
     };
   }
 
-  const openMins = parseTimeToMinutes(todaySchedule.open);
-  const closeMins = parseTimeToMinutes(todaySchedule.close);
+  // Check late-night definition: closes at 22:00 or later, overnight, or 24h
+  let isLateNight = false;
+  for (const interval of todayIntervals) {
+    const openMins = parseTimeToMinutes(interval.open);
+    const closeMins = parseTimeToMinutes(interval.close);
+    if (closeMins >= 22 * 60 || closeMins < openMins) {
+      isLateNight = true;
+      break;
+    }
+  }
+
+  // Check if current time falls within ANY of the today's intervals
+  const activeInterval = todayIntervals.find((interval) => isTimeInInterval(currentMinutes, interval));
 
   let isOpen = false;
   let statusText = 'Đang đóng cửa';
 
-  if (closeMins < openMins) {
-    // Overnight shift: e.g. 08:00 to 02:00 next day
-    if (currentMinutes >= openMins || currentMinutes < closeMins) {
-      isOpen = true;
-      statusText = `Đang mở cửa • Đóng lúc ${todaySchedule.close}`;
+  if (activeInterval) {
+    isOpen = true;
+    const openMins = parseTimeToMinutes(activeInterval.open);
+    const closeMins = parseTimeToMinutes(activeInterval.close);
+    const isOvernight = closeMins < openMins;
+    const diff = isOvernight
+      ? (currentMinutes >= openMins ? (24 * 60 - currentMinutes + closeMins) : (closeMins - currentMinutes))
+      : (closeMins - currentMinutes);
+
+    if (diff <= 30 && diff > 0) {
+      statusText = `Sắp đóng cửa • Đóng lúc ${activeInterval.close}`;
     } else {
-      statusText = `Đang đóng cửa • Mở lúc ${todaySchedule.open}`;
+      statusText = `Đang mở cửa • Đóng lúc ${activeInterval.close}`;
     }
   } else {
-    // Regular daytime shift: e.g. 07:00 to 23:00
-    if (currentMinutes >= openMins && currentMinutes < closeMins) {
-      isOpen = true;
-      if (closeMins - currentMinutes <= 30) {
-        statusText = `Sắp đóng cửa • Đóng lúc ${todaySchedule.close}`;
-      } else {
-        statusText = `Đang mở cửa • Đóng lúc ${todaySchedule.close}`;
-      }
-    } else if (currentMinutes < openMins) {
-      statusText = `Đang đóng cửa • Mở lúc ${todaySchedule.open}`;
+    isOpen = false;
+    // Find next upcoming interval today
+    const upcoming = todayIntervals.find((interval) => {
+      const openMins = parseTimeToMinutes(interval.open);
+      return openMins > currentMinutes;
+    });
+
+    if (upcoming) {
+      statusText = `Đang đóng cửa • Mở lúc ${upcoming.open}`;
     } else {
-      statusText = `Đã đóng cửa lúc ${todaySchedule.close}`;
+      statusText = `Đã đóng cửa hôm nay`;
     }
   }
 
@@ -133,7 +191,7 @@ export function getOpeningStatus(
     isOpen,
     isLateNight,
     statusText,
-    todayHoursText: `${todaySchedule.open} - ${todaySchedule.close}`,
+    todayHoursText: formatDayIntervals(todaySchedule),
   };
 }
 
@@ -323,9 +381,23 @@ export function getValidHourlySlots(
     return Array.from({ length: 24 }, (_, i) => i); // 0..23
   }
 
+  const extractSlotsFromSchedule = (sched?: DailyHours): number[] => {
+    if (!sched || sched.is_closed) return [];
+    const intervals = getDayIntervals(sched);
+    if (intervals.length === 0) return [];
+
+    const slotsSet = new Set<number>();
+    for (const interval of intervals) {
+      const parsed = parseHoursRangeToSlots(interval.open, interval.close);
+      for (const h of parsed) slotsSet.add(h);
+    }
+    return Array.from(slotsSet).sort((a, b) => a - b);
+  };
+
   // If today is open and has schedule:
   if (isTodayOpen && todaySchedule && !todaySchedule.is_closed) {
-    return parseHoursRangeToSlots(todaySchedule.open, todaySchedule.close);
+    const slots = extractSlotsFromSchedule(todaySchedule);
+    if (slots.length > 0) return slots;
   }
 
   // If forAdminEdit or today has no schedule, pick the first open day's schedule
@@ -333,7 +405,8 @@ export function getValidHourlySlots(
     if (activeDays.includes(dayKey)) {
       const sched = hours[dayKey] as DailyHours | undefined;
       if (sched && !sched.is_closed) {
-        return parseHoursRangeToSlots(sched.open, sched.close);
+        const slots = extractSlotsFromSchedule(sched);
+        if (slots.length > 0) return slots;
       }
     }
   }
@@ -341,7 +414,8 @@ export function getValidHourlySlots(
   // Fallback to any defined day in the hours object
   const anyDay = hours.monday || hours.tuesday || hours.wednesday || hours.thursday || hours.friday || hours.saturday || hours.sunday;
   if (anyDay && !anyDay.is_closed) {
-    return parseHoursRangeToSlots(anyDay.open, anyDay.close);
+    const slots = extractSlotsFromSchedule(anyDay);
+    if (slots.length > 0) return slots;
   }
 
   return Array.from({ length: 16 }, (_, i) => i + 7);

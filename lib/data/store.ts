@@ -281,6 +281,7 @@ class StudySpotStore {
         amenitiesRes,
         reportsRes,
         helpfulRes,
+        placeAmenitiesRes,
       ] = await Promise.all([
         supabase.from('users').select('*').order('created_at', { ascending: false }),
         supabase.from('places').select('*'),
@@ -292,6 +293,7 @@ class StudySpotStore {
         supabase.from('amenities').select('*').order('id', { ascending: true }),
         supabase.from('review_reports').select('*, review:reviews(*), user:users(*)').order('created_at', { ascending: false }),
         supabase.from('review_helpful').select('*'),
+        supabase.from('place_amenities').select('*'),
       ]);
 
       if (usersRes.data && usersRes.data.length > 0) {
@@ -314,7 +316,25 @@ class StudySpotStore {
 
       // Fallback to client Supabase query if /api/places?all=1 was not reachable
       if (!rawPlaces && placesRes.data) {
-        rawPlaces = placesRes.data;
+        const amList = amenitiesRes.data || this.amenities;
+        const amMap = new Map<number, Amenity>();
+        for (const am of amList) {
+          amMap.set(Number(am.id), am);
+        }
+        const paMap: Record<string, Amenity[]> = {};
+        if (placeAmenitiesRes?.data) {
+          for (const pa of placeAmenitiesRes.data) {
+            const matched = amMap.get(Number(pa.amenity_id));
+            if (matched) {
+              if (!paMap[pa.place_id]) paMap[pa.place_id] = [];
+              paMap[pa.place_id].push(matched);
+            }
+          }
+        }
+        rawPlaces = placesRes.data.map((dp: any) => ({
+          ...dp,
+          amenities: paMap[dp.id] || dp.amenities || [],
+        }));
       }
 
       if (rawPlaces !== null) {
@@ -331,7 +351,7 @@ class StudySpotStore {
               price_level: dp.price_level || 2,
               images: dp.images || [],
               view_count: dp.view_count || 0,
-              amenities: dp.amenities || [],
+              amenities: Array.isArray(dp.amenities) ? dp.amenities : [],
             };
           });
 
@@ -682,6 +702,18 @@ class StudySpotStore {
       supabase.from('places').update(updatePayload).eq('id', placeId).then(({ error }) => {
         if (error) console.warn('Supabase updatePlace notice:', error.message);
       });
+
+      if (data.amenities && Array.isArray(data.amenities)) {
+        supabase.from('place_amenities').delete().eq('place_id', placeId).then(() => {
+          const rows = data.amenities!.map((a: any) => ({
+            place_id: placeId,
+            amenity_id: typeof a === 'object' ? a.id : Number(a),
+          })).filter((r: any) => !isNaN(r.amenity_id));
+          if (rows.length > 0) {
+            supabase.from('place_amenities').insert(rows).then();
+          }
+        });
+      }
     }
     return p;
   }

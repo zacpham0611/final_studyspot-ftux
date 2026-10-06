@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createClient as createServerSupabase } from '@/lib/supabase/server';
 import { store } from '@/lib/data/store';
 
 export const dynamic = 'force-dynamic';
@@ -84,26 +85,38 @@ export async function POST(request: NextRequest) {
     let userProfile: any = null;
 
     if (supabaseAdmin) {
-      // 1. Mandatory verification of Bearer token with Supabase Auth
+      // 1. Verification of user session strictly via Supabase Auth (Bearer token OR verified SSR session)
+      let authenticatedUserId: string | null = null;
+
+      // 1a. Verify Bearer token if provided
       const authHeader = request.headers.get('authorization');
       const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
 
-      if (!token) {
+      if (token) {
+        const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);
+        if (!authErr && authData?.user) {
+          authenticatedUserId = authData.user.id;
+        }
+      }
+
+      // 1b. Check SSR Supabase session via createServerSupabase if Bearer token was not present or failed
+      if (!authenticatedUserId) {
+        try {
+          const serverSupabase = createServerSupabase();
+          const { data: serverAuth, error: serverAuthErr } = await serverSupabase.auth.getUser();
+          if (!serverAuthErr && serverAuth?.user) {
+            authenticatedUserId = serverAuth.user.id;
+          }
+        } catch (cookieErr) {}
+      }
+
+      // 1c. If user is not authenticated through Supabase Auth, reject immediately
+      if (!authenticatedUserId) {
         return NextResponse.json(
           { success: false, message: 'Vui lòng đăng nhập để báo độ đông (check-in)!' },
           { status: 401 }
         );
       }
-
-      const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);
-      if (authErr || !authData?.user) {
-        return NextResponse.json(
-          { success: false, message: 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại!' },
-          { status: 401 }
-        );
-      }
-
-      const authenticatedUserId = authData.user.id;
 
       // Reject spoofed body.userId if client explicitly provided a different ID
       if (userId && userId !== authenticatedUserId) {
@@ -113,31 +126,34 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Enforce authenticated user from verified Supabase token
+      // Enforce authenticated user from verified session
       targetUserId = authenticatedUserId;
 
       // 2. Query user profile from public.users and check locked status
-      const { data: dbUser } = await supabaseAdmin
-        .from('users')
-        .select('*')
-        .eq('id', targetUserId)
-        .maybeSingle();
+      if (!userProfile) {
+        const { data: dbUser } = await supabaseAdmin
+          .from('users')
+          .select('*')
+          .eq('id', targetUserId)
+          .maybeSingle();
 
-      if (dbUser) {
-        if (dbUser.is_locked) {
-          return NextResponse.json(
-            { success: false, message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.' },
-            { status: 403 }
-          );
+        if (dbUser) {
+          userProfile = dbUser;
+        } else {
+          userProfile = {
+            id: targetUserId,
+            full_name: 'Sinh viên FTU',
+            role: 'student',
+            is_locked: false,
+          };
         }
-        userProfile = dbUser;
-      } else {
-        userProfile = {
-          id: targetUserId,
-          full_name: authData.user.user_metadata?.full_name || 'Sinh viên FTU',
-          role: 'student',
-          is_locked: false,
-        };
+      }
+
+      if (userProfile.is_locked) {
+        return NextResponse.json(
+          { success: false, message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.' },
+          { status: 403 }
+        );
       }
     } else {
       // Fallback only when Supabase is not configured (mock/local environment)
