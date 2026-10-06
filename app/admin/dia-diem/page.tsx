@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { store } from '@/lib/data/store';
-import { Place, Category, OpeningHours } from '@/lib/types/database';
+import { Place, Category, OpeningHours, Amenity } from '@/lib/types/database';
 import { WEEK_DAYS, ALL_DAY_KEYS, getOpenDaysFromHours } from '@/lib/utils/hours';
 import { PRICE_RANGE_OPTIONS, calculatePriceLevel, getPriceRangesFromPlace } from '@/lib/utils/price';
 import { useToast } from '@/components/common/Toast';
@@ -27,6 +27,7 @@ export default function AdminPlacesPage() {
   const { showToast } = useToast();
   const [places, setPlaces] = useState<Place[]>([]);
   const [categories, setCategories] = useState<Category[]>(() => store.getCategories());
+  const [availableAmenities, setAvailableAmenities] = useState<Amenity[]>(() => store.getAmenities());
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<number | 'all'>('all');
 
@@ -43,6 +44,8 @@ export default function AdminPlacesPage() {
   const [editOpenTime, setEditOpenTime] = useState('07:30');
   const [editCloseTime, setEditCloseTime] = useState('22:30');
   const [editPriceRanges, setEditPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
+  const [editSelectedAmenityIds, setEditSelectedAmenityIds] = useState<number[]>([]);
+  const [editStatus, setEditStatus] = useState<Place['status']>('approved');
 
   // Modal State for Image Controls
   const [imageModalPlace, setImageModalPlace] = useState<Place | null>(null);
@@ -64,6 +67,8 @@ export default function AdminPlacesPage() {
   const [newOpenTime, setNewOpenTime] = useState('07:30');
   const [newCloseTime, setNewCloseTime] = useState('22:30');
   const [newPriceRanges, setNewPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
+  const [newSelectedAmenityIds, setNewSelectedAmenityIds] = useState<number[]>([1, 2, 4]);
+  const [newStatus, setNewStatus] = useState<Place['status']>('approved');
 
   const loadData = () => {
     setPlaces(store.getAllPlacesAdmin());
@@ -71,6 +76,10 @@ export default function AdminPlacesPage() {
     if (cats && cats.length > 0) {
       setCategories(cats);
       setNewCatId((prev) => (prev && cats.some((c) => Number(c.id) === Number(prev))) ? prev : Number(cats[0].id));
+    }
+    const ams = store.getAmenities();
+    if (ams && ams.length > 0) {
+      setAvailableAmenities(ams);
     }
   };
 
@@ -85,6 +94,16 @@ export default function AdminPlacesPage() {
         }
       })
       .catch(() => {});
+
+    fetch('/api/amenities', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && Array.isArray(data.amenities) && data.amenities.length > 0) {
+          setAvailableAmenities(data.amenities);
+        }
+      })
+      .catch(() => {});
+
     store.loadFromSupabase().then(loadData);
     const unsub = store.subscribe(loadData);
     return () => unsub();
@@ -138,6 +157,8 @@ export default function AdminPlacesPage() {
     setEditCloseTime(day?.close && day.close !== '23:59' ? day.close : '22:30');
     const ranges = getPriceRangesFromPlace(place);
     setEditPriceRanges(ranges);
+    setEditSelectedAmenityIds(place.amenities?.map((a) => a.id) || []);
+    setEditStatus(place.status || 'approved');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -171,6 +192,8 @@ export default function AdminPlacesPage() {
       sunday: { open: editIs24h ? '00:00' : editOpenTime, close: editIs24h ? '23:59' : editCloseTime, is_closed: !editOpenDays.includes('sunday') },
     };
 
+    const selectedAmenities = availableAmenities.filter((a) => editSelectedAmenityIds.includes(a.id));
+
     const editPayload: any = {
       name: editName.trim(),
       category_id: targetCatId,
@@ -182,6 +205,8 @@ export default function AdminPlacesPage() {
       price_ranges: editPriceRanges,
       description: editDescription.trim(),
       opening_hours: openingHours,
+      amenities: selectedAmenities,
+      status: editStatus,
     };
 
     store.updatePlace(editModalPlace.id, editPayload);
@@ -355,6 +380,18 @@ export default function AdminPlacesPage() {
     });
   };
 
+  const handleToggleNewAmenity = (id: number) => {
+    setNewSelectedAmenityIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleToggleEditAmenity = (id: number) => {
+    setEditSelectedAmenityIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
   // Create new place directly (approved)
   const handleCreatePlace = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -387,6 +424,8 @@ export default function AdminPlacesPage() {
       sunday: { open: newIs24h ? '00:00' : newOpenTime, close: newIs24h ? '23:59' : newCloseTime, is_closed: !newOpenDays.includes('sunday') },
     };
 
+    const selectedAmenities = availableAmenities.filter((a) => newSelectedAmenityIds.includes(a.id));
+
     const payload = {
       name: newName.trim(),
       category_id: targetCatId,
@@ -399,7 +438,8 @@ export default function AdminPlacesPage() {
       description: newDescription.trim(),
       images: newInitialImage.trim() ? [newInitialImage.trim()] : [],
       opening_hours: openingHours,
-      status: 'approved',
+      amenities: selectedAmenities,
+      status: newStatus,
       created_by: store.getCurrentUser()?.id,
     };
 
@@ -419,8 +459,8 @@ export default function AdminPlacesPage() {
       // Successfully created with real UUID from Supabase
       const createdPlace: Place = {
         ...data.place,
-        status: 'approved',
-        approved_at: data.place.approved_at || new Date().toISOString(),
+        status: newStatus,
+        approved_at: data.place.approved_at || (newStatus === 'approved' ? new Date().toISOString() : undefined),
       };
       store.savePlace(createdPlace);
       await store.loadFromSupabase();
@@ -436,7 +476,9 @@ export default function AdminPlacesPage() {
       setNewOpenTime('07:30');
       setNewCloseTime('22:30');
       setNewPriceRanges(['30.000đ – 50.000đ']);
-      showToast(`Đã tạo địa điểm "${payload.name}" thành công với trạng thái Hoạt động!`, 'success');
+      setNewSelectedAmenityIds([1, 2, 4]);
+      setNewStatus('approved');
+      showToast(`Đã tạo địa điểm "${payload.name}" thành công!`, 'success');
     } catch (err: any) {
       console.error('Create place error:', err);
       showToast('Lỗi kết nối khi tạo địa điểm: ' + err.message, 'error');
@@ -905,6 +947,47 @@ export default function AdminPlacesPage() {
                 />
               </div>
 
+              {/* Amenities multi-select */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 block">
+                  Tiện ích học tập <span className="text-gray-400 font-normal">(chọn các tiện ích có sẵn)</span>
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {availableAmenities.map((am) => {
+                    const checked = newSelectedAmenityIds.includes(am.id);
+                    return (
+                      <button
+                        key={am.id}
+                        type="button"
+                        onClick={() => handleToggleNewAmenity(am.id)}
+                        className={`p-2 rounded-xl border text-xs font-medium text-left transition-colors flex items-center justify-between ${
+                          checked
+                            ? 'border-burgundy bg-burgundy-light text-burgundy font-bold shadow-xs'
+                            : 'border-border text-gray-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate">{am.name}</span>
+                        <span className="font-bold text-xs ml-1">{checked ? '✓' : '+'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Status selection */}
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1">Trạng thái địa điểm</label>
+                <select
+                  value={newStatus}
+                  onChange={(e) => setNewStatus(e.target.value as Place['status'])}
+                  className="w-full p-2.5 rounded-xl border border-border text-xs bg-white focus:outline-none focus:border-burgundy font-medium"
+                >
+                  <option value="approved">Đã duyệt / Hiển thị công khai (Khuyên dùng)</option>
+                  <option value="pending">Chờ duyệt (Đề xuất)</option>
+                  <option value="hidden">Đang ẩn (Tạm đóng)</option>
+                </select>
+              </div>
+
               <div className="flex gap-2 justify-end pt-2">
                 <button
                   type="button"
@@ -1121,6 +1204,48 @@ export default function AdminPlacesPage() {
                   onChange={(e) => setEditDescription(e.target.value)}
                   className="w-full p-2.5 rounded-xl border border-border text-xs focus:outline-none focus:border-burgundy"
                 />
+              </div>
+
+              {/* Status selection */}
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1">Trạng thái hiển thị</label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as Place['status'])}
+                  className="w-full p-2.5 rounded-xl border border-border text-xs bg-white focus:outline-none focus:border-burgundy font-medium"
+                >
+                  <option value="approved">Đã duyệt / Hiển thị công khai</option>
+                  <option value="pending">Chờ duyệt (Đang xem xét)</option>
+                  <option value="hidden">Đang ẩn (Tạm ngừng hiển thị)</option>
+                  <option value="rejected">Bị từ chối (Không hiển thị)</option>
+                </select>
+              </div>
+
+              {/* Amenities multi-select */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 block">
+                  Tiện ích học tập <span className="text-gray-400 font-normal">(chọn các tiện ích có sẵn)</span>
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {availableAmenities.map((am) => {
+                    const checked = editSelectedAmenityIds.includes(am.id);
+                    return (
+                      <button
+                        key={am.id}
+                        type="button"
+                        onClick={() => handleToggleEditAmenity(am.id)}
+                        className={`p-2 rounded-xl border text-xs font-medium text-left transition-colors flex items-center justify-between ${
+                          checked
+                            ? 'border-burgundy bg-burgundy-light text-burgundy font-bold shadow-xs'
+                            : 'border-border text-gray-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate">{am.name}</span>
+                        <span className="font-bold text-xs ml-1">{checked ? '✓' : '+'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex gap-2 justify-end pt-3 border-t border-border">

@@ -131,17 +131,24 @@ export async function POST(request: NextRequest) {
           .eq('place_id', resolvedPlaceId)
           .or(`user_id.eq.${adminUserId},note.ilike.Admin%`);
 
-        // Step 6: Prepare batch rows for all hours using real UUID
-        const today = new Date();
+        // Step 6: Prepare batch rows for all hours using real UUID and explicit Vietnam timezone (+07:00)
+        const now = new Date();
+        const vnDateStr = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(now);
+
         const rows = hourlyData.map((item: { hour: number; level: number }) => {
-          const d = new Date(today);
-          d.setHours(item.hour, 0, 0, 0);
+          const hourPad = item.hour.toString().padStart(2, '0');
+          const isoVn = `${vnDateStr}T${hourPad}:00:00+07:00`;
           return {
             place_id: resolvedPlaceId,
             user_id: adminUserId,
             level: item.level,
             note: 'Admin thiết lập độ đông',
-            created_at: d.toISOString(),
+            created_at: isoVn,
           };
         });
 

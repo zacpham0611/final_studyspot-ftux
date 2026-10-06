@@ -197,3 +197,126 @@ export function formatOpenDaysText(hours?: OpeningHours): string {
   return `Mở cửa: ${dayNames.join(', ')}`;
 }
 
+/**
+ * Parses time intervals from open/close strings and returns array of valid hour numbers (0..23).
+ * Supports standard "09:00 - 22:00" as well as multi-shift intervals e.g. "08:00–12:00, 13:30–18:00".
+ */
+export function parseHoursRangeToSlots(openStr?: string, closeStr?: string): number[] {
+  if (!openStr && !closeStr) {
+    return Array.from({ length: 16 }, (_, i) => i + 7); // fallback 7..22
+  }
+
+  const combined = `${openStr || ''} - ${closeStr || ''}`;
+  // Look for intervals like "08:00 - 12:00" or "08:00-12:00"
+  const regex = /(\d{1,2})(?::(\d{2}))?\s*[-–~]\s*(\d{1,2})(?::(\d{2}))?/g;
+  const matches = Array.from(combined.matchAll(regex));
+
+  if (matches.length > 0) {
+    const slotsSet = new Set<number>();
+    for (const match of matches) {
+      const startH = parseInt(match[1], 10);
+      const endH = parseInt(match[3], 10);
+      if (isNaN(startH) || isNaN(endH)) continue;
+
+      if (endH >= startH) {
+        for (let h = startH; h <= endH; h++) {
+          if (h >= 0 && h <= 23) slotsSet.add(h);
+        }
+      } else {
+        // Overnight
+        for (let h = startH; h <= 23; h++) slotsSet.add(h);
+        for (let h = 0; h <= endH; h++) slotsSet.add(h);
+      }
+    }
+    const result = Array.from(slotsSet).sort((a, b) => a - b);
+    if (result.length > 0) return result;
+  }
+
+  // Fallback to simple startHour and endHour
+  const startH = openStr ? parseInt(openStr.split(':')[0], 10) : 7;
+  const endH = closeStr ? parseInt(closeStr.split(':')[0], 10) : 22;
+
+  if (isNaN(startH) || isNaN(endH)) {
+    return Array.from({ length: 16 }, (_, i) => i + 7);
+  }
+
+  const slots: number[] = [];
+  if (endH >= startH) {
+    for (let h = startH; h <= endH; h++) {
+      if (h >= 0 && h <= 23) slots.push(h);
+    }
+  } else {
+    for (let h = startH; h <= 23; h++) slots.push(h);
+    for (let h = 0; h <= endH; h++) slots.push(h);
+  }
+  return slots.length > 0 ? slots : Array.from({ length: 16 }, (_, i) => i + 7);
+}
+
+/**
+ * Returns valid hourly slots (numbers from 0..23) according to the venue's specific opening schedule.
+ * - If 24/7: returns all 24 hours [0..23].
+ * - If open 09:00-22:00: returns [9, 10, ..., 22].
+ * - If closed today and not for Admin editing: returns [] (closed today).
+ * - If for Admin edit: returns the venue's active open day slots so Admin can configure it.
+ */
+export function getValidHourlySlots(
+  hours?: OpeningHours,
+  options?: { forAdminEdit?: boolean; targetDate?: Date }
+): number[] {
+  if (!hours) {
+    return Array.from({ length: 16 }, (_, i) => i + 7); // Default 7..22
+  }
+
+  if (hours.is_24h) {
+    return Array.from({ length: 24 }, (_, i) => i); // 0..23
+  }
+
+  const now = options?.targetDate || new Date();
+  // Get Vietnam locale day index
+  const vnDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const vnDayIndex = new Date(vnDateStr).getDay(); // 0 is Sunday
+  const DAYS_ORDER: (keyof OpeningHours)[] = [
+    'sunday',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+  ];
+  const currentDayKey = DAYS_ORDER[vnDayIndex];
+
+  const activeDays = getOpenDaysFromHours(hours);
+  const isTodayOpen = activeDays.includes(currentDayKey);
+  const todaySchedule = hours[currentDayKey] as DailyHours | undefined;
+
+  // If today is closed and NOT for admin edit:
+  if (!options?.forAdminEdit && (!isTodayOpen || todaySchedule?.is_closed)) {
+    return []; // Closed today
+  }
+
+  // If today is open and has schedule:
+  if (isTodayOpen && todaySchedule && !todaySchedule.is_closed) {
+    return parseHoursRangeToSlots(todaySchedule.open, todaySchedule.close);
+  }
+
+  // If forAdminEdit or today has no schedule, pick the first open day's schedule
+  for (const dayKey of DAYS_ORDER) {
+    if (activeDays.includes(dayKey)) {
+      const sched = hours[dayKey] as DailyHours | undefined;
+      if (sched && !sched.is_closed) {
+        return parseHoursRangeToSlots(sched.open, sched.close);
+      }
+    }
+  }
+
+  // Fallback to any defined day in the hours object
+  const anyDay = hours.monday || hours.tuesday || hours.wednesday || hours.thursday || hours.friday || hours.saturday || hours.sunday;
+  if (anyDay && !anyDay.is_closed) {
+    return parseHoursRangeToSlots(anyDay.open, anyDay.close);
+  }
+
+  return Array.from({ length: 16 }, (_, i) => i + 7);
+}
+
+

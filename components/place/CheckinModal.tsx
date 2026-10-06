@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, Users, AlertCircle } from 'lucide-react';
-import { CrowdLevel } from '@/lib/types/database';
+import { CrowdLevel, Checkin } from '@/lib/types/database';
 import { store } from '@/lib/data/store';
 import { useToast } from '@/components/common/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
@@ -12,7 +12,7 @@ interface CheckinModalProps {
   onClose: () => void;
   placeId: string;
   placeName: string;
-  onCheckinSuccess: () => void;
+  onCheckinSuccess: (checkin?: Checkin) => void;
 }
 
 export function CheckinModal({
@@ -30,7 +30,7 @@ export function CheckinModal({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
       showToast('Vui lòng đăng nhập để báo độ đông!', 'error');
@@ -39,15 +39,46 @@ export function CheckinModal({
 
     setIsSubmitting(true);
 
-    const result = store.addCheckin(placeId, level, note.trim(), user || undefined);
-    setIsSubmitting(false);
+    try {
+      // 1. Submit via server API route
+      const res = await fetch('/api/checkins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          placeId,
+          level,
+          note: note.trim() || undefined,
+          userId: user.id,
+        }),
+      });
 
-    if (result.success) {
-      showToast(result.message, 'success');
-      onCheckinSuccess();
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Lỗi khi gửi check-in');
+      }
+
+      // 2. Also ensure local store has the checkin
+      const localResult = store.addCheckin(placeId, level, note.trim(), user || undefined);
+      const resultingCheckin: Checkin = data.checkin || localResult.checkin || {
+        id: `chk-${Date.now()}`,
+        place_id: placeId,
+        user_id: user.id,
+        level,
+        note: note.trim() || undefined,
+        created_at: new Date().toISOString(),
+        user: {
+          full_name: user.full_name || 'Sinh viên FTU',
+          avatar_url: user.avatar_url,
+        },
+      };
+
+      showToast(data.message || 'Báo độ đông thành công! Cảm ơn bạn đã đóng góp cho cộng đồng FTU.', 'success');
+      onCheckinSuccess(resultingCheckin);
       onClose();
-    } else {
-      showToast(result.message, 'error');
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi gửi check-in', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

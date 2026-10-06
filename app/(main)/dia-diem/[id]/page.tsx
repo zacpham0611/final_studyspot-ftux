@@ -18,6 +18,7 @@ import { supabase } from '@/lib/supabase/client';
 import { formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { formatOpenDaysText, getOpenDaysFromHours } from '@/lib/utils/hours';
 import { getPriceRangesFromPlace } from '@/lib/utils/price';
+import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { 
   Star, 
   MapPin, 
@@ -92,8 +93,9 @@ export default function PlaceDetailPage() {
         .eq('place_id', placeId)
         .order('created_at', { ascending: false });
 
-      if (!error && supaReviews && supaReviews.length > 0) {
+      if (!error && supaReviews) {
         setReviews(supaReviews as any);
+        store.syncPlaceReviews(placeId, supaReviews as any);
       } else {
         setReviews(store.getReviewsForPlace(placeId));
       }
@@ -185,6 +187,14 @@ export default function PlaceDetailPage() {
       return;
     }
     setIsCheckinOpen(true);
+  };
+
+  const handleCheckinSuccess = (newCheckin?: Checkin) => {
+    if (newCheckin) {
+      setCheckins((prev) => [newCheckin, ...prev.filter((c) => c.id !== newCheckin.id)]);
+      store.syncPlaceCheckins(placeId, [newCheckin, ...checkins.filter((c) => c.id !== newCheckin.id)]);
+    }
+    refreshData();
   };
 
   const handleOpenReview = () => {
@@ -280,7 +290,12 @@ export default function PlaceDetailPage() {
     selectedStarFilter === 'all' ? true : r.rating === selectedStarFilter
   );
 
-  const hourlyCrowdData = store.getHourlyCrowdData(place.id, checkins);
+  const hourlyCrowdData = store.getHourlyCrowdData(place.id, checkins, place.opening_hours);
+  const realTimeCrowd = calculateCrowdStatus(checkins);
+  const currentCrowdStatus = realTimeCrowd.status !== 'unknown' ? realTimeCrowd.status : (place.crowd_status || 'unknown');
+  const currentCrowdLabel = realTimeCrowd.status !== 'unknown' ? realTimeCrowd.label : (place.crowd_label || 'Chưa có dữ liệu');
+  const currentCrowdScore = realTimeCrowd.score !== null ? realTimeCrowd.score : place.crowd_score;
+
   const priceSymbol = '$'.repeat(place.price_level || 2);
   const placePriceRanges = getPriceRangesFromPlace(place);
   const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
@@ -319,19 +334,19 @@ export default function PlaceDetailPage() {
             {/* Real-time Crowd Badge */}
             <div
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold shadow-sm ${
-                place.crowd_status === 'empty'
+                currentCrowdStatus === 'empty'
                   ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  : place.crowd_status === 'medium'
+                  : currentCrowdStatus === 'medium'
                   ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                  : place.crowd_status === 'full'
+                  : currentCrowdStatus === 'full'
                   ? 'bg-rose-100 text-rose-800 border border-rose-300'
                   : 'bg-gray-100 text-gray-800 border border-gray-300'
               }`}
             >
               <span className="w-2 h-2 rounded-full animate-pulse bg-current"></span>
-              <span>Độ đông: {place.crowd_label}</span>
-              {place.crowd_score && (
-                <span className="text-[10px] opacity-75">({place.crowd_score.toFixed(1)}/3)</span>
+              <span>Độ đông: {currentCrowdLabel}</span>
+              {currentCrowdScore !== undefined && currentCrowdScore !== null && (
+                <span className="text-[10px] opacity-75">({currentCrowdScore.toFixed(1)}/3)</span>
               )}
             </div>
 
@@ -449,6 +464,7 @@ export default function PlaceDetailPage() {
             data={hourlyCrowdData}
             placeId={place.id}
             isAdmin={currentUser?.role === 'admin'}
+            openingHours={place.opening_hours}
             onDataUpdated={refreshCheckinsOnly}
           />
 
@@ -810,7 +826,7 @@ export default function PlaceDetailPage() {
         onClose={() => setIsCheckinOpen(false)}
         placeId={place.id}
         placeName={place.name}
-        onCheckinSuccess={refreshData}
+        onCheckinSuccess={handleCheckinSuccess}
       />
 
       <ReviewModal

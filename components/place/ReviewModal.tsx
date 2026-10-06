@@ -80,57 +80,27 @@ export function ReviewModal({
       };
 
       // 1. Submit to API endpoint for direct Supabase persistence
-      try {
-        const apiRes = await fetch('/api/reviews', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reviewPayload),
-        });
-        const apiJson = await apiRes.json();
-        if (!apiRes.ok && apiJson.error && apiJson.error.includes('đã viết đánh giá')) {
-          showToast('Bạn đã viết đánh giá cho địa điểm này rồi.', 'error');
-          setIsSubmitting(false);
-          return;
-        }
-      } catch (apiErr) {
-        console.warn('API review POST notice:', apiErr);
+      const apiRes = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reviewPayload),
+      });
+
+      const apiJson = await apiRes.json();
+      if (!apiRes.ok || !apiJson.success) {
+        throw new Error(apiJson.error || apiJson.message || 'Lỗi khi lưu đánh giá vào cơ sở dữ liệu');
       }
 
-      // 2. Direct Supabase insert attempt
-      try {
-        await supabase.from('reviews').insert(reviewPayload);
-      } catch (dbErr) {}
-
-      // 3. Sync with local client store
-      store.addReview(reviewPayload);
-      await store.loadFromSupabase();
+      // 2. Sync with local client store
+      const persistedReview = apiJson.review || reviewPayload;
+      store.addReview(persistedReview);
 
       showToast('Đăng đánh giá thành công lên hệ thống!', 'success');
       onReviewSuccess();
       onClose();
     } catch (err: any) {
       console.error('Review submit error:', err);
-      // Client store fallback
-      const result = store.addReview({
-        place_id: placeId,
-        user_id: currentUser.id,
-        rating,
-        wifi_rating: wifiRating,
-        outlet_rating: outletRating,
-        quiet_rating: quietRating,
-        price_rating: priceRating,
-        space_rating: spaceRating,
-        content: content.trim(),
-        images: imageUrl.trim() ? [imageUrl.trim()] : [],
-      });
-
-      if (result.success) {
-        showToast(result.message, 'success');
-        onReviewSuccess();
-        onClose();
-      } else {
-        showToast(result.message, 'error');
-      }
+      showToast(err.message || 'Không thể đăng đánh giá. Vui lòng thử lại!', 'error');
     } finally {
       setIsSubmitting(false);
     }

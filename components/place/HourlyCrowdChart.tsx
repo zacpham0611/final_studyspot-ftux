@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { CrowdStatus } from '@/lib/types/database';
+import { CrowdStatus, OpeningHours } from '@/lib/types/database';
 import { Clock, Info, Edit3, Check, X, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/common/Toast';
 import { store } from '@/lib/data/store';
+import { getValidHourlySlots } from '@/lib/utils/hours';
 
 interface HourlyData {
   hour: number;
@@ -18,11 +19,23 @@ interface HourlyCrowdChartProps {
   data: HourlyData[];
   placeId?: string;
   isAdmin?: boolean;
+  openingHours?: OpeningHours;
   onDataUpdated?: () => void;
 }
 
-export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: HourlyCrowdChartProps) {
-  const currentHour = new Date().getHours();
+export function HourlyCrowdChart({ data, placeId, isAdmin, openingHours, onDataUpdated }: HourlyCrowdChartProps) {
+  const currentHour = (() => {
+    try {
+      const vnStr = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour: 'numeric',
+        hour12: false,
+      }).format(new Date());
+      return parseInt(vnStr, 10);
+    } catch {
+      return new Date().getHours();
+    }
+  })();
   const { showToast } = useToast();
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -36,9 +49,11 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
     setChartData(data);
   }, [data]);
 
+  const adminSlots = getValidHourlySlots(openingHours, { forAdminEdit: true });
+
   const [editLevels, setEditLevels] = useState<{ [hour: number]: number }>(() => {
     const initial: { [hour: number]: number } = {};
-    for (let h = 7; h <= 22; h++) {
+    for (const h of adminSlots) {
       const match = data.find((d) => d.hour === h);
       if (match && match.score > 0) {
         initial[h] = Math.round(match.score);
@@ -49,19 +64,21 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
     return initial;
   });
 
-  // Keep editLevels aligned with latest chartData
+  // Keep editLevels aligned with latest chartData and valid slots
   useEffect(() => {
     setEditLevels((prev) => {
       const updated = { ...prev };
-      for (let h = 7; h <= 22; h++) {
+      for (const h of adminSlots) {
         const match = chartData.find((d) => d.hour === h);
         if (match && match.score > 0) {
           updated[h] = Math.round(match.score);
+        } else if (updated[h] === undefined) {
+          updated[h] = 1;
         }
       }
       return updated;
     });
-  }, [chartData]);
+  }, [chartData, openingHours]);
 
   // Check if any hour has actual check-in data
   const hasData = chartData && chartData.length > 0 && chartData.some((d) => d.score > 0 || (d.count && d.count > 0));
@@ -92,14 +109,14 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
     const previousChartData = [...chartData];
     const previousEditLevels = { ...editLevels };
 
-    // 2. Prepare payload for all hours 07:00–22:00 (1 single batch payload)
-    const payload = Object.entries(editLevels).map(([h, lvl]) => ({
-      hour: parseInt(h, 10),
-      level: lvl,
+    // 2. Prepare payload for all venue valid hours (1 single batch payload)
+    const payload = adminSlots.map((h) => ({
+      hour: h,
+      level: editLevels[h] || 1,
     }));
 
     // 3. Optimistic UI update: instantly update UI bars and stats
-    const optimisticChartData: HourlyData[] = Array.from({ length: 16 }, (_, i) => i + 7).map((h) => {
+    const optimisticChartData: HourlyData[] = adminSlots.map((h) => {
       const lvl = editLevels[h] || 1;
       const status: CrowdStatus = lvl <= 1 ? 'empty' : lvl === 2 ? 'medium' : 'full';
       return {
@@ -167,7 +184,7 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
             <Clock className="w-4 h-4 text-burgundy" /> Độ đông trung bình theo giờ
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Dựa trên phân tích lịch sử check-in của FTUer từ 07:00 đến 22:00
+            Dựa trên phân tích lịch sử check-in của FTUer theo khung giờ mở cửa
           </p>
         </div>
 
@@ -299,7 +316,7 @@ export function HourlyCrowdChart({ data, placeId, isAdmin, onDataUpdated }: Hour
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-xs">
-              {Array.from({ length: 16 }, (_, i) => i + 7).map((h) => {
+              {adminSlots.map((h) => {
                 const currentVal = editLevels[h] || 1;
                 return (
                   <div key={h} className="p-2 border border-border rounded-xl flex items-center justify-between bg-slate-50">

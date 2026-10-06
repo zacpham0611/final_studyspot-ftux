@@ -9,7 +9,8 @@ import {
   CrowdLevel,
   CrowdStatus,
   Notification,
-  ReviewReport
+  ReviewReport,
+  OpeningHours
 } from '@/lib/types/database';
 import { 
   INITIAL_PLACES, 
@@ -23,7 +24,7 @@ import {
 } from './mockData';
 import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { calculateDistance, formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
-import { getOpeningStatus } from '@/lib/utils/hours';
+import { getOpeningStatus, getValidHourlySlots } from '@/lib/utils/hours';
 import { matchesSearch } from '@/lib/utils/text';
 import { PRICE_RANGE_OPTIONS, getPriceRangesFromPlace } from '@/lib/utils/price';
 import { supabase } from '@/lib/supabase/client';
@@ -730,27 +731,40 @@ class StudySpotStore {
   }
 
   /**
-   * Calculates hourly crowd histogram (07:00 to 22:00) purely from checkins.
+   * Calculates hourly crowd histogram according to place's opening hours (or default slots) purely from checkins.
    * Returns empty array if no check-ins exist for the place.
    */
   getHourlyCrowdData(
     placeId: string, 
-    customCheckins?: Checkin[]
+    customCheckins?: Checkin[],
+    openingHours?: OpeningHours
   ): { hour: number; label: string; score: number; level: CrowdStatus; count: number }[] {
     const placeCheckins = customCheckins !== undefined ? customCheckins : this.getCheckinsForPlace(placeId);
     if (!placeCheckins || placeCheckins.length === 0) {
       return [];
     }
 
+    const placeHours = openingHours || this.getPlaceById(placeId)?.opening_hours;
+    const validSlots = getValidHourlySlots(placeHours);
+    if (!validSlots || validSlots.length === 0) {
+      return [];
+    }
+
     const hourlyScores: { [h: number]: number[] } = {};
-    for (let h = 7; h <= 22; h++) {
+    for (const h of validSlots) {
       hourlyScores[h] = [];
     }
 
     for (const c of placeCheckins) {
       const d = new Date(c.created_at);
-      const h = d.getHours();
-      if (hourlyScores[h]) {
+      // Determine hour in Vietnam time (UTC+7)
+      const vnFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour: 'numeric',
+        hour12: false,
+      });
+      const h = parseInt(vnFormatter.format(d), 10);
+      if (hourlyScores[h] !== undefined) {
         hourlyScores[h].push(c.level);
       }
     }
@@ -761,7 +775,7 @@ class StudySpotStore {
     }
 
     const result = [];
-    for (let h = 7; h <= 22; h++) {
+    for (const h of validSlots) {
       const logs = hourlyScores[h];
       if (logs.length > 0) {
         const score = logs.reduce((a, b) => a + b, 0) / logs.length;
@@ -796,18 +810,32 @@ class StudySpotStore {
     this.notify();
   }
 
+  syncPlaceReviews(placeId: string, newReviews: Review[]) {
+    this.reviews = this.reviews.filter((r) => r.place_id !== placeId).concat(newReviews);
+    this.persist();
+    this.notify();
+  }
+
   setHourlyCrowdData(placeId: string, hourlyLevels: { hour: number; level: number }[]) {
-    const today = new Date();
+    const now = new Date();
+    // Get YYYY-MM-DD in Asia/Ho_Chi_Minh
+    const vnDateStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+
     const newCheckins: Checkin[] = hourlyLevels.map(({ hour, level }) => {
-      const d = new Date(today);
-      d.setHours(hour, 0, 0, 0);
+      const hourPad = hour.toString().padStart(2, '0');
+      const isoVn = `${vnDateStr}T${hourPad}:00:00+07:00`;
       return {
         id: `chk-admin-${placeId}-${hour}`,
         place_id: placeId,
         user_id: this.currentUser?.id || 'admin-override',
         level: level as CrowdLevel,
         note: 'Admin thiết lập',
-        created_at: d.toISOString(),
+        created_at: isoVn,
       };
     });
 
