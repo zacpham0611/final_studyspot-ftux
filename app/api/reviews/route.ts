@@ -8,10 +8,6 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const placeId = searchParams.get('placeId') || searchParams.get('place_id');
 
-  if (!placeId) {
-    return NextResponse.json({ success: false, message: 'placeId is required' }, { status: 400 });
-  }
-
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -19,23 +15,34 @@ export async function GET(request: NextRequest) {
     try {
       const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
       let data: any = null;
-      const embedRes = await supabaseAdmin
+
+      let query = supabaseAdmin
         .from('reviews')
         .select('*, user:users!reviews_user_id_fkey(full_name, avatar_url)')
-        .eq('place_id', placeId)
         .eq('is_hidden', false)
         .order('created_at', { ascending: false });
+
+      if (placeId && placeId !== 'all') {
+        query = query.eq('place_id', placeId);
+      }
+
+      const embedRes = await query;
 
       if (!embedRes.error && embedRes.data) {
         data = embedRes.data;
       } else {
         // Fallback: fetch plain reviews and join users to prevent ambiguous relationship errors
-        const plainRes = await supabaseAdmin
+        let plainQuery = supabaseAdmin
           .from('reviews')
           .select('*')
-          .eq('place_id', placeId)
           .eq('is_hidden', false)
           .order('created_at', { ascending: false });
+
+        if (placeId && placeId !== 'all') {
+          plainQuery = plainQuery.eq('place_id', placeId);
+        }
+
+        const plainRes = await plainQuery;
 
         if (!plainRes.error && plainRes.data) {
           const userIds = Array.from(new Set(plainRes.data.map((r: any) => r.user_id).filter(Boolean)));
@@ -64,7 +71,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const reviews = store.getReviewsForPlace(placeId);
+  const reviews = (placeId && placeId !== 'all') ? store.getReviewsForPlace(placeId) : store.getAllReviewsAdmin();
   return NextResponse.json({ reviews, count: reviews.length });
 }
 

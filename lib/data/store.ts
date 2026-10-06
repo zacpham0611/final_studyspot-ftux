@@ -166,6 +166,14 @@ class StudySpotStore {
   }
 
   // --- Auth methods ---
+  getUsers(): UserProfile[] {
+    return this.users;
+  }
+
+  getUserById(id: string): UserProfile | undefined {
+    return this.users.find((u) => u.id === id);
+  }
+
   getCurrentUser(): UserProfile | null {
     return this.currentUser;
   }
@@ -335,7 +343,21 @@ class StudySpotStore {
         }
       }
 
-      if (reviewsRes.data && reviewsRes.data.length > 0) {
+      // Authoritative Reviews Sync (Single Source of Truth)
+      let supaReviewsList: Review[] | null = null;
+      try {
+        const revApiRes = await fetch('/api/reviews', { cache: 'no-store' });
+        if (revApiRes.ok) {
+          const revApiJson = await revApiRes.json();
+          if (Array.isArray(revApiJson.reviews)) {
+            supaReviewsList = revApiJson.reviews;
+          }
+        }
+      } catch (rErr) {}
+
+      if (supaReviewsList !== null && supaReviewsList.length > 0) {
+        this.reviews = supaReviewsList;
+      } else if (reviewsRes.data && reviewsRes.data.length > 0) {
         this.reviews = reviewsRes.data;
       } else {
         // Resilient fallback if relationship embedding encounters schema notice
@@ -422,17 +444,17 @@ class StudySpotStore {
         const amRes = await fetch('/api/amenities', { cache: 'no-store' });
         if (amRes.ok) {
           const amJson = await amRes.json();
-          if (Array.isArray(amJson.amenities) && amJson.amenities.length > 0) {
+          if (Array.isArray(amJson.amenities)) {
             supaAmenities = amJson.amenities;
           }
         }
       } catch (aErr) {}
 
-      if (!supaAmenities && amenitiesRes.data && amenitiesRes.data.length > 0) {
+      if (!supaAmenities && amenitiesRes.data) {
         supaAmenities = amenitiesRes.data;
       }
 
-      if (supaAmenities !== null && supaAmenities.length > 0) {
+      if (supaAmenities !== null) {
         this.amenities = supaAmenities;
       }
 
@@ -1565,7 +1587,7 @@ class StudySpotStore {
   }
 
   deleteAmenity(amId: number) {
-    this.amenities = this.amenities.filter((a) => a.id !== amId);
+    this.amenities = this.amenities.filter((a) => Number(a.id) !== Number(amId));
     this.persist();
     this.notify();
     if (typeof window !== 'undefined') {

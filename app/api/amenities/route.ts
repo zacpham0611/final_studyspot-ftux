@@ -19,7 +19,7 @@ export async function GET() {
         .select('*')
         .order('id', { ascending: true });
 
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return NextResponse.json(
           { amenities: data },
           { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
@@ -141,20 +141,37 @@ export async function DELETE(request: NextRequest) {
         auth: { persistSession: false },
       });
 
-      // Delete associations from place_amenities first
-      try {
-        await supabaseAdmin.from('place_amenities').delete().eq('amenity_id', amId);
-      } catch (paErr) {}
+      // 1. Delete linked associations from place_amenities first to ensure FK integrity
+      const { error: paErr } = await supabaseAdmin
+        .from('place_amenities')
+        .delete()
+        .eq('amenity_id', amId);
 
-      // Delete from amenities
-      const { error } = await supabaseAdmin
+      if (paErr) {
+        console.error('Supabase place_amenities delete error:', paErr.message);
+        return NextResponse.json(
+          { success: false, error: `Không thể xóa liên kết tiện ích trong place_amenities: ${paErr.message}` },
+          { status: 500 }
+        );
+      }
+
+      // 2. Delete from amenities and verify affected rows
+      const { data: deletedRows, error: amErr } = await supabaseAdmin
         .from('amenities')
         .delete()
-        .eq('id', amId);
+        .eq('id', amId)
+        .select();
 
-      if (error) {
-        console.error('Supabase amenities delete error:', error.message);
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      if (amErr) {
+        console.error('Supabase amenities delete error:', amErr.message);
+        return NextResponse.json({ success: false, error: amErr.message }, { status: 500 });
+      }
+
+      if (!deletedRows || deletedRows.length === 0) {
+        return NextResponse.json(
+          { success: false, error: `Không tìm thấy tiện ích ID #${amId} trong cơ sở dữ liệu Supabase để xóa.` },
+          { status: 404 }
+        );
       }
     }
 

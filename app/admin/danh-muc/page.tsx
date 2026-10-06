@@ -165,6 +165,7 @@ export default function AdminCategoriesPage() {
       }
 
       showToast(`Đã xóa tiện ích "${name}" thành công`, 'info');
+      store.deleteAmenity(id);
       await loadData();
     } catch (err: any) {
       showToast(err.message || 'Lỗi kết nối khi xóa tiện ích', 'error');

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { X, Users, AlertCircle } from 'lucide-react';
 import { CrowdLevel, Checkin } from '@/lib/types/database';
 import { store } from '@/lib/data/store';
+import { supabase } from '@/lib/supabase/client';
 import { useToast } from '@/components/common/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
 
@@ -40,10 +41,18 @@ export function CheckinModal({
     setIsSubmitting(true);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          headers['Authorization'] = `Bearer ${sessionData.session.access_token}`;
+        }
+      } catch (authErr) {}
+
       // 1. Submit via server API route
       const res = await fetch('/api/checkins', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           placeId,
           level,

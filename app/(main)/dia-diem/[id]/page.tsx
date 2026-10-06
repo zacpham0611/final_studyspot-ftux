@@ -85,41 +85,55 @@ export default function PlaceDetailPage() {
 
     try {
       let supaReviews: any[] | null = null;
-      const { data, error } = await supabase
-        .from('reviews')
-        .select(`
-          *,
-          user:users!reviews_user_id_fkey(full_name, avatar_url)
-        `)
-        .eq('place_id', placeId)
-        .order('created_at', { ascending: false });
 
-      if (!error && data) {
-        supaReviews = data;
-      } else {
-        // Fallback: fetch reviews and join users to prevent ambiguous relationship errors
-        const { data: plainReviews, error: plainErr } = await supabase
+      // 1. Prioritize authoritative server API route (service role access to Supabase PostgreSQL)
+      try {
+        const revRes = await fetch(`/api/reviews?placeId=${encodeURIComponent(placeId)}`, { cache: 'no-store' });
+        if (revRes.ok) {
+          const revJson = await revRes.json();
+          if (Array.isArray(revJson.reviews)) {
+            supaReviews = revJson.reviews;
+          }
+        }
+      } catch (apiErr) {}
+
+      // 2. Direct browser Supabase client fallback if API route was unreachable
+      if (!supaReviews) {
+        const { data, error } = await supabase
           .from('reviews')
-          .select('*')
+          .select(`
+            *,
+            user:users!reviews_user_id_fkey(full_name, avatar_url)
+          `)
           .eq('place_id', placeId)
           .order('created_at', { ascending: false });
 
-        if (!plainErr && plainReviews) {
-          const userIds = Array.from(new Set(plainReviews.map((r: any) => r.user_id).filter(Boolean)));
-          let userMap: Record<string, any> = {};
-          if (userIds.length > 0) {
-            const { data: usersData } = await supabase
-              .from('users')
-              .select('id, full_name, avatar_url')
-              .in('id', userIds);
-            if (usersData) {
-              userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+        if (!error && data) {
+          supaReviews = data;
+        } else {
+          const { data: plainReviews } = await supabase
+            .from('reviews')
+            .select('*')
+            .eq('place_id', placeId)
+            .order('created_at', { ascending: false });
+
+          if (plainReviews) {
+            const userIds = Array.from(new Set(plainReviews.map((r: any) => r.user_id).filter(Boolean)));
+            let userMap: Record<string, any> = {};
+            if (userIds.length > 0) {
+              const { data: usersData } = await supabase
+                .from('users')
+                .select('id, full_name, avatar_url')
+                .in('id', userIds);
+              if (usersData) {
+                userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+              }
             }
+            supaReviews = plainReviews.map((r: any) => ({
+              ...r,
+              user: userMap[r.user_id] || null,
+            }));
           }
-          supaReviews = plainReviews.map((r: any) => ({
-            ...r,
-            user: userMap[r.user_id] || null,
-          }));
         }
       }
 
