@@ -26,7 +26,7 @@ import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { calculateDistance, formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { getOpeningStatus, getValidHourlySlots } from '@/lib/utils/hours';
 import { matchesSearch } from '@/lib/utils/text';
-import { PRICE_RANGE_OPTIONS, getPriceRangesFromPlace } from '@/lib/utils/price';
+import { PRICE_RANGE_OPTIONS, getPriceRangesFromPlace, normalizePriceRange } from '@/lib/utils/price';
 import { supabase } from '@/lib/supabase/client';
 
 export const isUuid = (str?: string | null): boolean => {
@@ -560,12 +560,13 @@ class StudySpotStore {
 
       if (options.priceRanges && options.priceRanges.length > 0) {
         const placeRanges = getPriceRangesFromPlace(p);
+        const normalizedOptionRanges = options.priceRanges.map(normalizePriceRange);
         if (placeRanges.length > 0) {
-          const hasMatch = options.priceRanges.some((r) => placeRanges.includes(r));
+          const hasMatch = normalizedOptionRanges.some((r) => placeRanges.includes(r));
           if (!hasMatch) return false;
         } else {
           // Backward compatibility for legacy places with only price_level:
-          const selectedLevels = options.priceRanges.map((r) => {
+          const selectedLevels = normalizedOptionRanges.map((r) => {
             const found = PRICE_RANGE_OPTIONS.find((opt) => opt.value === r);
             return found ? found.level : 2;
           });

@@ -48,14 +48,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Fetch or sync the latest profile from Supabase Database (public.users)
   const refreshUser = useCallback(async (): Promise<UserProfile | null> => {
     try {
-      // 1. Check active Supabase session
-      const { data: { session } } = await supabase.auth.getSession();
+      // 1. Check active Supabase session (primary: getSession, fallback: getUser)
+      let sessionUser: any = null;
+      let sessionCreatedAt: string | undefined = undefined;
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.user) {
+        sessionUser = sessionData.session.user;
+        sessionCreatedAt = sessionData.session.user.created_at;
+      } else {
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData?.user) {
+          sessionUser = userData.user;
+          sessionCreatedAt = userData.user.created_at;
+        }
+      }
       
-      if (session?.user) {
-        const userId = session.user.id;
-        const userEmail = session.user.email?.toLowerCase() || '';
+      if (sessionUser) {
+        const userId = sessionUser.id;
+        const userEmail = sessionUser.email?.toLowerCase() || '';
         const isAdm = userEmail === ADMIN_EMAIL;
         const targetRole: UserRole = isAdm ? 'admin' : 'student';
+        const dbRole = isAdm ? 'admin' : 'user';
 
         // 2. Query public.users table directly from Supabase
         const { data: dbUser } = await supabase
@@ -76,12 +90,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           const resolvedUser: UserProfile = {
             id: dbUser.id,
-            full_name: dbUser.full_name || session.user.user_metadata?.full_name || userEmail.split('@')[0],
+            full_name: dbUser.full_name || sessionUser.user_metadata?.full_name || userEmail.split('@')[0],
             email: userEmail,
-            avatar_url: dbUser.avatar_url || session.user.user_metadata?.avatar_url || null,
-            role: (isAdm ? 'admin' : (dbUser.role || targetRole)) as UserRole,
+            avatar_url: dbUser.avatar_url || sessionUser.user_metadata?.avatar_url || null,
+            role: (isAdm ? 'admin' : (dbUser.role === 'admin' ? 'admin' : 'student')) as UserRole,
             is_locked: false,
-            created_at: dbUser.created_at || session.user.created_at,
+            created_at: dbUser.created_at || sessionCreatedAt || new Date().toISOString(),
           };
 
           store.setCurrentUser(resolvedUser);
@@ -89,15 +103,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           syncCookies(resolvedUser);
           return resolvedUser;
         } else {
-          // User exists in auth but not yet in public.users -> upsert directly
+          // User exists in auth but not yet in public.users -> upsert directly with valid dbRole ('admin' | 'user')
           const newUser: UserProfile = {
             id: userId,
-            full_name: session.user.user_metadata?.full_name || userEmail.split('@')[0],
+            full_name: sessionUser.user_metadata?.full_name || userEmail.split('@')[0],
             email: userEmail,
-            avatar_url: session.user.user_metadata?.avatar_url || null,
+            avatar_url: sessionUser.user_metadata?.avatar_url || null,
             role: targetRole,
             is_locked: false,
-            created_at: session.user.created_at,
+            created_at: sessionCreatedAt || new Date().toISOString(),
           };
 
           try {
@@ -106,7 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               full_name: newUser.full_name,
               email: userEmail,
               avatar_url: newUser.avatar_url,
-              role: targetRole,
+              role: dbRole,
               is_locked: false,
             });
           } catch (e) {
@@ -120,12 +134,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // If no active Supabase auth session, check stored user (offline / resilient mode)
-      const currentStored = store.getCurrentUser();
-      if (currentStored) {
-        setUser(currentStored);
-        syncCookies(currentStored);
-        return currentStored;
+      // If no active Supabase auth session:
+      const isSupabaseConfigured = Boolean(
+        process.env.NEXT_PUBLIC_SUPABASE_URL &&
+        !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')
+      );
+
+      if (!isSupabaseConfigured) {
+        const currentStored = store.getCurrentUser();
+        if (currentStored) {
+          setUser(currentStored);
+          syncCookies(currentStored);
+          return currentStored;
+        }
       }
 
       // Truly Unauthenticated Guest
@@ -135,18 +156,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     } catch (e) {
       console.warn('Auth refresh warning:', e);
-      const currentStored = store.getCurrentUser();
-      if (currentStored) {
-        setUser(currentStored);
-        syncCookies(currentStored);
-        return currentStored;
+      // Resilience against transient network failure or navigation abort:
+      // If we already have a valid user in store/state, preserve it instead of dropping session
+      const existingUser = user || store.getCurrentUser();
+      if (existingUser) {
+        return existingUser;
       }
-      store.setCurrentUser(null);
-      setUser(null);
-      syncCookies(null);
       return null;
     }
-  }, [syncCookies]);
+  }, [syncCookies, user]);
 
   // Initial authentication check on application mount
   useEffect(() => {
@@ -176,6 +194,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await refreshUser();
         }
         if (mounted) setIsLoading(false);
+      } else if (event === 'INITIAL_SESSION') {
+        if (session?.user) {
+          await refreshUser();
+          if (mounted) setIsLoading(false);
+        }
+        // Do NOT eagerly clear user if session is null on INITIAL_SESSION:
+        // initAuth() runs concurrently and performs authoritative session verification.
       }
     });
 
@@ -230,13 +255,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // 3. Upsert role and profile into Supabase public.users
+        const dbRole = isAdm ? 'admin' : 'user';
         try {
           await supabase.from('users').upsert({
             id: sessionUser.id,
             email: cleanEmail,
             full_name: fullName,
             avatar_url: avatarUrl,
-            role: targetRole,
+            role: dbRole,
             is_locked: false,
           });
         } catch (upErr) {
@@ -262,41 +288,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: true, role: targetRole };
       }
 
-      // 5. Fallback for demo / offline accounts in local store
-      const localRes = store.loginWithEmail(cleanEmail, pass);
-      if (localRes.success && localRes.user) {
-        const localUser = localRes.user;
-        localUser.role = targetRole;
-        syncCookies(localUser);
-        store.setCurrentUser(localUser);
-        setUser(localUser);
-        setIsLoading(false);
-        return { success: true, role: targetRole };
+      // 5. Fallback for demo / offline accounts in local store ONLY when Supabase is not configured
+      const isSupabaseConfigured = Boolean(
+        process.env.NEXT_PUBLIC_SUPABASE_URL &&
+        !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')
+      );
+
+      if (!isSupabaseConfigured) {
+        const localRes = store.loginWithEmail(cleanEmail, pass);
+        if (localRes.success && localRes.user) {
+          const localUser = localRes.user;
+          localUser.role = targetRole;
+          syncCookies(localUser);
+          store.setCurrentUser(localUser);
+          setUser(localUser);
+          setIsLoading(false);
+          return { success: true, role: targetRole };
+        }
       }
 
       setIsLoading(false);
       return {
         success: false,
-        message: 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
+        message: error?.message || 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
       };
     } catch (err: any) {
       console.error('Login process error:', err);
-      // Offline fallback
-      const localRes = store.loginWithEmail(cleanEmail, pass);
-      if (localRes.success && localRes.user) {
-        const localUser = localRes.user;
-        localUser.role = targetRole;
-        syncCookies(localUser);
-        store.setCurrentUser(localUser);
-        setUser(localUser);
-        setIsLoading(false);
-        return { success: true, role: targetRole };
+      // Offline fallback only when Supabase is not configured
+      const isSupabaseConfigured = Boolean(
+        process.env.NEXT_PUBLIC_SUPABASE_URL &&
+        !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')
+      );
+
+      if (!isSupabaseConfigured) {
+        const localRes = store.loginWithEmail(cleanEmail, pass);
+        if (localRes.success && localRes.user) {
+          const localUser = localRes.user;
+          localUser.role = targetRole;
+          syncCookies(localUser);
+          store.setCurrentUser(localUser);
+          setUser(localUser);
+          setIsLoading(false);
+          return { success: true, role: targetRole };
+        }
       }
 
       setIsLoading(false);
       return {
         success: false,
-        message: 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
+        message: err?.message || 'Tài khoản chưa được đăng ký hoặc mật khẩu không chính xác. Vui lòng đăng ký tài khoản mới!',
       };
     }
   }, [syncCookies]);

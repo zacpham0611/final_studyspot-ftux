@@ -57,7 +57,7 @@ export function getDayIntervals(schedule?: DailyHours | TimeInterval[] | null): 
 export function formatDayIntervals(schedule?: DailyHours | TimeInterval[] | null): string {
   const intervals = getDayIntervals(schedule);
   if (intervals.length === 0) return 'Nghỉ';
-  return intervals.map((i) => `${i.open} - ${i.close}`).join(', ');
+  return intervals.map((i) => `${i.open}–${i.close}`).join(', ');
 }
 
 /**
@@ -77,8 +77,57 @@ export function isTimeInInterval(currentMinutes: number, interval: TimeInterval)
 }
 
 /**
+ * Accurately extracts current date and time components in Asia/Ho_Chi_Minh (UTC+7) timezone
+ * ensuring consistency across server rendering, client hydration, and client timezones.
+ */
+export function getVietnamTime(date?: Date): {
+  dayOfWeekIndex: number; // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  currentMinutes: number; // minutes from midnight (0..1439)
+  timeStr: string;        // "HH:mm"
+} {
+  const d = date || new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(d);
+  let weekdayStr = '';
+  let hour = 0;
+  let minute = 0;
+  for (const part of parts) {
+    if (part.type === 'weekday') weekdayStr = part.value;
+    else if (part.type === 'hour') hour = parseInt(part.value, 10);
+    else if (part.type === 'minute') minute = parseInt(part.value, 10);
+  }
+  if (hour === 24) hour = 0;
+
+  const weekdayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  const dayOfWeekIndex = weekdayMap[weekdayStr] ?? 0;
+  const currentMinutes = hour * 60 + minute;
+  const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+  return { dayOfWeekIndex, currentMinutes, timeStr };
+}
+
+/**
  * Evaluates whether a place is currently open and whether it is a late-night venue.
- * Timezone: Asia/Ho_Chi_Minh (UTC+7)
+ * Authoritative Timezone: Asia/Ho_Chi_Minh (UTC+7)
+ * Consistently handles:
+ * - Single intervals (e.g. 08:00 - 20:00: open at 08:00, closed at 20:00)
+ * - Multi-intervals (e.g. 08:00 - 11:45 & 13:30 - 17:00: closed in between)
+ * - Overnight shifts across midnight (e.g. 18:00 - 02:00 from previous day or today)
+ * - 24/7 vs 24h per active day
  */
 export function getOpeningStatus(
   hours?: OpeningHours,
@@ -89,29 +138,46 @@ export function getOpeningStatus(
       isOpen: true,
       isLateNight: false,
       statusText: 'Đang mở cửa',
-      todayHoursText: '07:00 - 22:30',
+      todayHoursText: '07:00 – 22:30',
     };
   }
 
-  // Get current date in Vietnam time
-  const now = overrideDate || new Date();
-  // Format to VN locale time
-  const vnTimeStr = now.toLocaleTimeString('en-US', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  const currentMinutes = parseTimeToMinutes(vnTimeStr);
-
-  const dayOfWeekIndex = now.getDay(); // 0 is Sunday
+  const { dayOfWeekIndex, currentMinutes } = getVietnamTime(overrideDate);
   const currentDayKey = DAYS_MAP[dayOfWeekIndex];
+  const yesterdayIndex = (dayOfWeekIndex + 6) % 7;
+  const yesterdayKey = DAYS_MAP[yesterdayIndex];
+
   const activeDays = getOpenDaysFromHours(hours);
   const isTodayOpen = activeDays.includes(currentDayKey);
-  const todaySchedule: DailyHours | undefined = hours[currentDayKey] as DailyHours | undefined;
+  const isYesterdayOpen = activeDays.includes(yesterdayKey);
 
-  // 1. If today is not an operating day or explicitly marked closed
-  if (!isTodayOpen || todaySchedule?.is_closed) {
+  const todaySchedule: DailyHours | undefined = hours[currentDayKey] as DailyHours | undefined;
+  const yesterdaySchedule: DailyHours | undefined = hours[yesterdayKey] as DailyHours | undefined;
+
+  // Check late-night definition for venue (any active day has overnight shift or closes at >= 22:00)
+  const isVenueLateNight = hours.is_24h || (ALL_DAY_KEYS as readonly string[]).some((dayKey) => {
+    if (!activeDays.includes(dayKey)) return false;
+    const sched = hours[dayKey as keyof OpeningHours] as DailyHours | undefined;
+    if (!sched || sched.is_closed) return false;
+    const intervals = getDayIntervals(sched);
+    return intervals.some((i) => {
+      const o = parseTimeToMinutes(i.open);
+      const c = parseTimeToMinutes(i.close);
+      return c < o || c >= 22 * 60;
+    });
+  });
+
+  // 1. 24h venue check
+  if (hours.is_24h) {
+    const is24_7 = activeDays.length === 7;
+    if (isTodayOpen && !todaySchedule?.is_closed) {
+      return {
+        isOpen: true,
+        isLateNight: true,
+        statusText: is24_7 ? 'Mở cửa 24/7' : 'Mở cửa 24/24 hôm nay',
+        todayHoursText: is24_7 ? 'Cả ngày (24/7)' : 'Cả ngày (24h)',
+      };
+    }
     return {
       isOpen: false,
       isLateNight: false,
@@ -120,14 +186,39 @@ export function getOpeningStatus(
     };
   }
 
-  // 2. If 24h per day on an active operating day
-  if (hours.is_24h) {
-    const is24_7 = activeDays.length === 7;
+  // 2. Check overnight spillover from YESTERDAY'S shift:
+  // If yesterday was an active day with an overnight shift (C < O), and now T < C (early morning today):
+  if (isYesterdayOpen && !yesterdaySchedule?.is_closed) {
+    const yIntervals = getDayIntervals(yesterdaySchedule);
+    const spilloverInterval = yIntervals.find((interval) => {
+      const openMins = parseTimeToMinutes(interval.open);
+      const closeMins = parseTimeToMinutes(interval.close);
+      return closeMins < openMins && currentMinutes < closeMins;
+    });
+
+    if (spilloverInterval) {
+      const closeMins = parseTimeToMinutes(spilloverInterval.close);
+      const diff = closeMins - currentMinutes;
+      const statusText = diff <= 30 && diff > 0
+        ? `Sắp đóng cửa • Đóng lúc ${spilloverInterval.close}`
+        : `Đang mở cửa • Đóng lúc ${spilloverInterval.close}`;
+
+      return {
+        isOpen: true,
+        isLateNight: true,
+        statusText,
+        todayHoursText: isTodayOpen && !todaySchedule?.is_closed ? formatDayIntervals(todaySchedule) : 'Đóng cửa hôm nay',
+      };
+    }
+  }
+
+  // 3. If today is NOT an operating day or explicitly marked closed
+  if (!isTodayOpen || todaySchedule?.is_closed) {
     return {
-      isOpen: true,
-      isLateNight: true,
-      statusText: is24_7 ? 'Mở cửa 24/7' : 'Mở cửa 24/24 hôm nay',
-      todayHoursText: is24_7 ? 'Cả ngày (24/7)' : 'Cả ngày (24h)',
+      isOpen: false,
+      isLateNight: isVenueLateNight,
+      statusText: 'Đóng cửa hôm nay',
+      todayHoursText: 'Đóng cửa',
     };
   }
 
@@ -135,61 +226,57 @@ export function getOpeningStatus(
   if (todayIntervals.length === 0) {
     return {
       isOpen: false,
-      isLateNight: false,
+      isLateNight: isVenueLateNight,
       statusText: 'Đóng cửa hôm nay',
       todayHoursText: 'Đóng cửa',
     };
   }
 
-  // Check late-night definition: closes at 22:00 or later, overnight, or 24h
-  let isLateNight = false;
-  for (const interval of todayIntervals) {
+  // 4. Check today's active intervals
+  const activeInterval = todayIntervals.find((interval) => {
     const openMins = parseTimeToMinutes(interval.open);
     const closeMins = parseTimeToMinutes(interval.close);
-    if (closeMins >= 22 * 60 || closeMins < openMins) {
-      isLateNight = true;
-      break;
+    if (closeMins > openMins) {
+      // Regular daytime shift: open <= current < close
+      return currentMinutes >= openMins && currentMinutes < closeMins;
     }
-  }
-
-  // Check if current time falls within ANY of the today's intervals
-  const activeInterval = todayIntervals.find((interval) => isTimeInInterval(currentMinutes, interval));
-
-  let isOpen = false;
-  let statusText = 'Đang đóng cửa';
+    // Overnight starting today (from open until midnight)
+    return currentMinutes >= openMins;
+  });
 
   if (activeInterval) {
-    isOpen = true;
     const openMins = parseTimeToMinutes(activeInterval.open);
     const closeMins = parseTimeToMinutes(activeInterval.close);
     const isOvernight = closeMins < openMins;
     const diff = isOvernight
-      ? (currentMinutes >= openMins ? (24 * 60 - currentMinutes + closeMins) : (closeMins - currentMinutes))
+      ? (24 * 60 - currentMinutes + closeMins)
       : (closeMins - currentMinutes);
 
-    if (diff <= 30 && diff > 0) {
-      statusText = `Sắp đóng cửa • Đóng lúc ${activeInterval.close}`;
-    } else {
-      statusText = `Đang mở cửa • Đóng lúc ${activeInterval.close}`;
-    }
-  } else {
-    isOpen = false;
-    // Find next upcoming interval today
-    const upcoming = todayIntervals.find((interval) => {
-      const openMins = parseTimeToMinutes(interval.open);
-      return openMins > currentMinutes;
-    });
+    const statusText = diff <= 30 && diff > 0
+      ? `Sắp đóng cửa • Đóng lúc ${activeInterval.close}`
+      : `Đang mở cửa • Đóng lúc ${activeInterval.close}`;
 
-    if (upcoming) {
-      statusText = `Đang đóng cửa • Mở lúc ${upcoming.open}`;
-    } else {
-      statusText = `Đã đóng cửa hôm nay`;
-    }
+    return {
+      isOpen: true,
+      isLateNight: isVenueLateNight || isOvernight || closeMins >= 22 * 60,
+      statusText,
+      todayHoursText: formatDayIntervals(todaySchedule),
+    };
   }
 
+  // 5. Currently closed today: find next upcoming interval today
+  const upcoming = todayIntervals.find((interval) => {
+    const openMins = parseTimeToMinutes(interval.open);
+    return openMins > currentMinutes;
+  });
+
+  const statusText = upcoming
+    ? `Đang đóng cửa • Mở lúc ${upcoming.open}`
+    : 'Đã đóng cửa hôm nay';
+
   return {
-    isOpen,
-    isLateNight,
+    isOpen: false,
+    isLateNight: isVenueLateNight,
     statusText,
     todayHoursText: formatDayIntervals(todaySchedule),
   };
@@ -353,19 +440,8 @@ export function getValidHourlySlots(
   }
 
   const now = options?.targetDate || new Date();
-  // Get Vietnam locale day index
-  const vnDateStr = now.toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' });
-  const vnDayIndex = new Date(vnDateStr).getDay(); // 0 is Sunday
-  const DAYS_ORDER: (keyof OpeningHours)[] = [
-    'sunday',
-    'monday',
-    'tuesday',
-    'wednesday',
-    'thursday',
-    'friday',
-    'saturday',
-  ];
-  const currentDayKey = DAYS_ORDER[vnDayIndex];
+  const { dayOfWeekIndex } = getVietnamTime(now);
+  const currentDayKey = DAYS_MAP[dayOfWeekIndex];
 
   const activeDays = getOpenDaysFromHours(hours);
   const isTodayOpen = activeDays.includes(currentDayKey);
@@ -401,7 +477,7 @@ export function getValidHourlySlots(
   }
 
   // If forAdminEdit or today has no schedule, pick the first open day's schedule
-  for (const dayKey of DAYS_ORDER) {
+  for (const dayKey of DAYS_MAP) {
     if (activeDays.includes(dayKey)) {
       const sched = hours[dayKey] as DailyHours | undefined;
       if (sched && !sched.is_closed) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { store } from '@/lib/data/store';
 import { createClient } from '@supabase/supabase-js';
 import { INITIAL_CATEGORIES } from '@/lib/data/mockData';
+import { getOpeningStatus } from '@/lib/utils/hours';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -77,6 +78,7 @@ export async function GET(request: NextRequest) {
         let places = data.map((dp: any) => {
           const parsedHours = typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : dp.opening_hours;
           const resolvedAmenities = placeAmenitiesMap[dp.id] || (Array.isArray(dp.amenities) ? dp.amenities : []);
+          const hoursStatus = getOpeningStatus(parsedHours);
           return {
             ...dp,
             opening_hours: parsedHours,
@@ -85,6 +87,8 @@ export async function GET(request: NextRequest) {
             images: dp.images || [],
             view_count: dp.view_count || 0,
             amenities: resolvedAmenities,
+            is_open: hoursStatus.isOpen,
+            is_late_night: hoursStatus.isLateNight,
           };
         });
 
@@ -442,6 +446,14 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    let targetPlaceId = placeId;
+    if (!isUuid(targetPlaceId)) {
+      const matched = store.getPlaceById(placeId);
+      if (matched && isUuid(matched.id)) {
+        targetPlaceId = matched.id;
+      }
+    }
+
     // 1. Update in-memory store
     if (status) {
       if (status === 'approved') {
@@ -461,9 +473,13 @@ export async function PATCH(request: NextRequest) {
     if (lng !== undefined) editFields.lng = Number(lng);
     if (description !== undefined) editFields.description = description;
     if (price_level !== undefined) editFields.price_level = price_level;
-    if (body.price_ranges !== undefined) editFields.price_ranges = body.price_ranges;
     if (images !== undefined) editFields.images = images;
-    if (opening_hours !== undefined) editFields.opening_hours = opening_hours;
+    if (opening_hours !== undefined) {
+      editFields.opening_hours = opening_hours;
+      if (body.price_ranges !== undefined && typeof editFields.opening_hours === 'object' && editFields.opening_hours !== null) {
+        editFields.opening_hours.price_ranges = body.price_ranges;
+      }
+    }
 
     if (Object.keys(editFields).length > 0) {
       store.updatePlace(placeId, editFields);
@@ -510,12 +526,12 @@ export async function PATCH(request: NextRequest) {
         const { data, error } = await supabaseAdmin
           .from('places')
           .update(updateData)
-          .eq('id', placeId)
+          .eq('id', targetPlaceId)
           .select()
           .single();
 
         if (error) {
-          console.warn('Supabase places update error:', error.message);
+          console.error('Supabase places update error:', error.message);
           return NextResponse.json({ success: false, error: error.message }, { status: 500 });
         }
 
@@ -536,9 +552,9 @@ export async function PATCH(request: NextRequest) {
 
         if (body.amenities && Array.isArray(body.amenities)) {
           try {
-            await supabaseAdmin.from('place_amenities').delete().eq('place_id', placeId);
+            await supabaseAdmin.from('place_amenities').delete().eq('place_id', targetPlaceId);
             const rows = body.amenities.map((a: any) => ({
-              place_id: placeId,
+              place_id: targetPlaceId,
               amenity_id: typeof a === 'object' ? a.id : Number(a),
             })).filter((r: any) => !isNaN(r.amenity_id));
             if (rows.length > 0) {
@@ -549,7 +565,8 @@ export async function PATCH(request: NextRequest) {
 
         return NextResponse.json({ success: true, place: data });
       } catch (dbErr: any) {
-        console.warn('Supabase places update network error:', dbErr.message);
+        console.error('Supabase places update network error:', dbErr.message);
+        return NextResponse.json({ success: false, error: dbErr.message }, { status: 500 });
       }
     }
 

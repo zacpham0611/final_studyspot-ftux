@@ -43,15 +43,22 @@ export function CheckinModal({
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       let token: string | null = null;
+      let hasSession = false;
       try {
         const { data: sessionData } = await supabase.auth.getSession();
-        token = sessionData?.session?.access_token || null;
+        if (sessionData?.session) {
+          hasSession = true;
+          token = sessionData.session.access_token || null;
+        }
         if (!token) {
           const { data: refreshData } = await supabase.auth.refreshSession();
-          token = refreshData?.session?.access_token || null;
+          if (refreshData?.session) {
+            hasSession = true;
+            token = refreshData.session.access_token || null;
+          }
         }
         if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
+          headers['Authorization'] = `Bearer ${token.trim()}`;
         }
       } catch (authErr) {}
 
@@ -59,6 +66,7 @@ export function CheckinModal({
         console.log('[CHECKIN DEBUG client]', {
           hasUser: Boolean(user),
           userId: user?.id,
+          hasSession,
           hasToken: Boolean(token),
         });
       }

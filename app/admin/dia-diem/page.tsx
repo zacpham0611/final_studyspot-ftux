@@ -47,6 +47,7 @@ export default function AdminPlacesPage() {
   const [editPriceRanges, setEditPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
   const [editSelectedAmenityIds, setEditSelectedAmenityIds] = useState<number[]>([]);
   const [editStatus, setEditStatus] = useState<Place['status']>('approved');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Modal State for Image Controls
   const [imageModalPlace, setImageModalPlace] = useState<Place | null>(null);
@@ -213,9 +214,9 @@ export default function AdminPlacesPage() {
     const calculatedPriceLevel = calculatePriceLevel(editPriceRanges);
 
     const validIntervals = editIntervals.filter((i) => i.open && i.close);
-    const primaryOpen = editIs24h ? '00:00' : (validIntervals[0]?.open || editOpenTime || '07:30');
-    const primaryClose = editIs24h ? '23:59' : (validIntervals[validIntervals.length - 1]?.close || editCloseTime || '22:30');
-    const dayIntervals = editIs24h ? [{ open: '00:00', close: '23:59' }] : validIntervals;
+    const primaryOpen = validIntervals[0]?.open || editOpenTime || '07:30';
+    const primaryClose = validIntervals[validIntervals.length - 1]?.close || editCloseTime || '22:30';
+    const dayIntervals = validIntervals;
 
     const createDaySchedule = (dayKey: string) => ({
       open: primaryOpen,
@@ -254,19 +255,33 @@ export default function AdminPlacesPage() {
       status: editStatus,
     };
 
-    store.updatePlace(editModalPlace.id, editPayload);
     const targetId = editModalPlace.id;
-    loadData();
-    setEditModalPlace(null);
-    showToast(`Đã lưu thay đổi cho địa điểm "${editName}"!`, 'success');
+    setIsSavingEdit(true);
 
     try {
-      await fetch('/api/places', {
+      const res = await fetch('/api/places', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId: targetId, ...editPayload }),
       });
-    } catch (e) {}
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Lỗi khi cập nhật địa điểm trên cơ sở dữ liệu Supabase');
+      }
+
+      // Update store with authoritative returned place from Supabase
+      const updatedPlace = data.place || { ...editModalPlace, ...editPayload };
+      store.updatePlace(targetId, updatedPlace);
+      loadData();
+      setEditModalPlace(null);
+      showToast(`Đã lưu thay đổi cho địa điểm "${editName}"!`, 'success');
+    } catch (err: any) {
+      console.error('Save edit place error:', err);
+      showToast(err.message || 'Không thể lưu thay đổi vào cơ sở dữ liệu Supabase. Vui lòng thử lại!', 'error');
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   // Image Control: Client side compression + add image
@@ -460,9 +475,9 @@ export default function AdminPlacesPage() {
     const calculatedPriceLevel = calculatePriceLevel(newPriceRanges);
 
     const validIntervals = newIntervals.filter((i) => i.open && i.close);
-    const primaryOpen = newIs24h ? '00:00' : (validIntervals[0]?.open || newOpenTime || '07:30');
-    const primaryClose = newIs24h ? '23:59' : (validIntervals[validIntervals.length - 1]?.close || newCloseTime || '22:30');
-    const dayIntervals = newIs24h ? [{ open: '00:00', close: '23:59' }] : validIntervals;
+    const primaryOpen = validIntervals[0]?.open || newOpenTime || '07:30';
+    const primaryClose = validIntervals[validIntervals.length - 1]?.close || newCloseTime || '22:30';
+    const dayIntervals = validIntervals;
 
     const createNewDaySchedule = (dayKey: string) => ({
       open: primaryOpen,
@@ -1517,16 +1532,18 @@ export default function AdminPlacesPage() {
               <div className="flex gap-2 justify-end pt-3 border-t border-border">
                 <button
                   type="button"
+                  disabled={isSavingEdit}
                   onClick={() => setEditModalPlace(null)}
-                  className="px-4 py-2 rounded-xl text-xs text-gray-600 hover:bg-slate-100 font-semibold"
+                  className="px-4 py-2 rounded-xl text-xs text-gray-600 hover:bg-slate-100 font-semibold disabled:opacity-50"
                 >
                   Hủy bỏ
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover shadow-sm"
+                  disabled={isSavingEdit}
+                  className="px-5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover shadow-sm disabled:opacity-70 flex items-center gap-1.5"
                 >
-                  Lưu thay đổi
+                  {isSavingEdit ? 'Đang lưu vào Supabase...' : 'Lưu thay đổi'}
                 </button>
               </div>
             </form>

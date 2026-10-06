@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
 
       // 1a. Verify Bearer token if provided
       const authHeader = request.headers.get('authorization');
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : null;
 
       if (token) {
         const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);

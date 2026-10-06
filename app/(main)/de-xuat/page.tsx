@@ -6,10 +6,10 @@ import dynamic from 'next/dynamic';
 import { store } from '@/lib/data/store';
 import { FTU_COORDINATES } from '@/lib/utils/distance';
 import { useToast } from '@/components/common/Toast';
-import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle, Check, Compass } from 'lucide-react';
+import { PlusCircle, MapPin, Search, Loader2, X, AlertCircle, Check, Compass, Trash2 } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthContext';
 import { AuthGuard } from '@/components/auth/AuthGuard';
-import { Category, Amenity } from '@/lib/types/database';
+import { Category, Amenity, TimeInterval } from '@/lib/types/database';
 import { WEEK_DAYS, ALL_DAY_KEYS } from '@/lib/utils/hours';
 import { PRICE_RANGE_OPTIONS, calculatePriceLevel } from '@/lib/utils/price';
 
@@ -38,6 +38,7 @@ function SuggestPlaceContent() {
   const [openDays, setOpenDays] = useState<string[]>([...ALL_DAY_KEYS]);
   const [openTime, setOpenTime] = useState('07:30');
   const [closeTime, setCloseTime] = useState('22:30');
+  const [intervals, setIntervals] = useState<TimeInterval[]>([{ open: '07:30', close: '22:30' }]);
   const [selectedPriceRanges, setSelectedPriceRanges] = useState<string[]>(['30.000đ – 50.000đ']);
   const [selectedAmenityIds, setSelectedAmenityIds] = useState<number[]>([1, 2, 5]);
   const [imageUrl, setImageUrl] = useState('');
@@ -327,6 +328,16 @@ function SuggestPlaceContent() {
 
     const calculatedPriceLevel = calculatePriceLevel(selectedPriceRanges);
 
+    const validIntervals = intervals.filter((i) => i.open && i.close);
+    const primaryOpen = validIntervals[0]?.open || openTime || '07:30';
+    const primaryClose = validIntervals[validIntervals.length - 1]?.close || closeTime || '22:30';
+    const createSchedule = (dayKey: string) => ({
+      open: primaryOpen,
+      close: primaryClose,
+      is_closed: !openDays.includes(dayKey),
+      intervals: !openDays.includes(dayKey) ? [] : validIntervals,
+    });
+
     const placePayload = {
       name: name.trim(),
       category_id: targetCatId,
@@ -339,13 +350,13 @@ function SuggestPlaceContent() {
         is_24h: is24h,
         open_days: openDays,
         price_ranges: selectedPriceRanges,
-        monday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('monday') },
-        tuesday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('tuesday') },
-        wednesday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('wednesday') },
-        thursday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('thursday') },
-        friday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('friday') },
-        saturday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('saturday') },
-        sunday: { open: is24h ? '00:00' : openTime, close: is24h ? '23:59' : closeTime, is_closed: !openDays.includes('sunday') },
+        monday: createSchedule('monday'),
+        tuesday: createSchedule('tuesday'),
+        wednesday: createSchedule('wednesday'),
+        thursday: createSchedule('thursday'),
+        friday: createSchedule('friday'),
+        saturday: createSchedule('saturday'),
+        sunday: createSchedule('sunday'),
       },
       price_level: calculatedPriceLevel,
       price_ranges: selectedPriceRanges,
@@ -749,34 +760,124 @@ function SuggestPlaceContent() {
             </div>
           </div>
 
-          {/* Daily hours */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-bold text-gray-700 block mb-1">Giờ mở cửa</label>
-              <input
-                type="time"
-                disabled={is24h}
-                value={is24h ? '00:00' : openTime}
-                onChange={(e) => setOpenTime(e.target.value)}
-                className={`w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy ${
-                  is24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''
-                }`}
-              />
+          {/* Progressive Disclosure Opening Hours */}
+          {is24h ? (
+            <div className="p-3 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-medium">
+              Địa điểm mở cửa liên tục 24/24 vào các ngày đã chọn.
             </div>
-
-            <div>
-              <label className="text-xs font-bold text-gray-700 block mb-1">Giờ đóng cửa</label>
-              <input
-                type="time"
-                disabled={is24h}
-                value={is24h ? '23:59' : closeTime}
-                onChange={(e) => setCloseTime(e.target.value)}
-                className={`w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy ${
-                  is24h ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''
-                }`}
-              />
+          ) : intervals.length <= 1 ? (
+            /* CASE 1: 1 interval -> Compact original 2-column layout */
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-gray-700 block mb-1">Giờ mở cửa</label>
+                  <input
+                    type="time"
+                    value={intervals[0]?.open || openTime}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setOpenTime(val);
+                      setIntervals([{ open: val, close: intervals[0]?.close || closeTime }]);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-700 block mb-1">Giờ đóng cửa</label>
+                  <input
+                    type="time"
+                    value={intervals[0]?.close || closeTime}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCloseTime(val);
+                      setIntervals([{ open: intervals[0]?.open || openTime, close: val }]);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentOpen = intervals[0]?.open || openTime || '07:30';
+                    const currentClose = intervals[0]?.close || closeTime || '22:30';
+                    setIntervals([
+                      { open: currentOpen, close: '11:45' },
+                      { open: '13:30', close: currentClose },
+                    ]);
+                  }}
+                  className="text-xs font-bold text-burgundy hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  + Thêm khung giờ
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* CASE 2: Multi-interval -> Progressive disclosure list */
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-700 block">
+                  Các khung giờ hoạt động trong ngày:
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIntervals([...intervals, { open: '13:30', close: '17:00' }])}
+                  className="text-xs font-bold text-burgundy hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  + Thêm khung giờ
+                </button>
+              </div>
+              <div className="space-y-2">
+                {intervals.map((interval, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="time"
+                        value={interval.open}
+                        onChange={(e) => {
+                          const updated = [...intervals];
+                          updated[idx] = { ...updated[idx], open: e.target.value };
+                          setIntervals(updated);
+                          if (idx === 0) setOpenTime(e.target.value);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy"
+                      />
+                    </div>
+                    <span className="text-gray-400 text-xs font-bold">—</span>
+                    <div className="flex-1">
+                      <input
+                        type="time"
+                        value={interval.close}
+                        onChange={(e) => {
+                          const updated = [...intervals];
+                          updated[idx] = { ...updated[idx], close: e.target.value };
+                          setIntervals(updated);
+                          if (idx === intervals.length - 1) setCloseTime(e.target.value);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-border text-sm focus:outline-none focus:border-burgundy"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = intervals.filter((_, i) => i !== idx);
+                        setIntervals(updated);
+                        if (updated.length === 1) {
+                          setOpenTime(updated[0].open);
+                          setCloseTime(updated[0].close);
+                        }
+                      }}
+                      className="p-2 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                      title="Xóa khung giờ này"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Price Range Multi-select */}
           <div className="space-y-1.5 pt-1">

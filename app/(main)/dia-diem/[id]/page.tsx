@@ -16,7 +16,7 @@ import { useToast } from '@/components/common/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase/client';
 import { formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
-import { formatOpenDaysText, getOpenDaysFromHours, formatDayIntervals } from '@/lib/utils/hours';
+import { formatOpenDaysText, getOpenDaysFromHours, formatDayIntervals, getOpeningStatus } from '@/lib/utils/hours';
 import { getPriceRangesFromPlace } from '@/lib/utils/price';
 import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { 
@@ -380,6 +380,9 @@ export default function PlaceDetailPage() {
   const priceSymbol = placePriceRanges.length === 1 && placePriceRanges[0] === 'Miễn phí' ? '0đ' : '$'.repeat(place.price_level || 2);
   const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
   const openDaysSummary = formatOpenDaysText(place.opening_hours);
+  const currentHoursStatus = getOpeningStatus(place.opening_hours);
+  const isPlaceOpen = place.is_open ?? currentHoursStatus.isOpen;
+  const isPlaceLateNight = place.is_late_night ?? currentHoursStatus.isLateNight;
 
   return (
     <motion.div
@@ -433,15 +436,15 @@ export default function PlaceDetailPage() {
             {/* Open / Closed Badge */}
             <span
               className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                place.is_open
+                isPlaceOpen
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                   : 'bg-rose-50 text-rose-700 border border-rose-200'
               }`}
             >
-              {place.is_open ? '● Đang mở cửa' : '○ Đang đóng cửa'}
+              {isPlaceOpen ? '● Đang mở cửa' : '○ Đang đóng cửa'}
             </span>
 
-            {place.is_late_night && (
+            {isPlaceLateNight && (
               <span className="px-2 py-0.5 rounded-lg text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
                 <Moon className="w-3 h-3" /> Mở muộn
               </span>
@@ -823,7 +826,7 @@ export default function PlaceDetailPage() {
                   ))
                 ) : (
                   <span className="text-xs text-gray-500 font-medium">
-                    {priceSymbol} ({place.price_level === 1 ? '< 30.000đ (Giá sinh viên)' : place.price_level === 2 ? '30.000đ – 50.000đ' : place.price_level === 3 ? '50.000đ – 70.000đ' : '> 70.000đ'})
+                    {priceSymbol} ({place.price_level === 1 ? 'Dưới 30.000đ (Giá sinh viên)' : place.price_level === 2 ? '30.000đ – 50.000đ' : place.price_level === 3 ? '50.000đ – 100.000đ' : 'Trên 100.000đ'})
                   </span>
                 )}
               </div>
@@ -837,7 +840,7 @@ export default function PlaceDetailPage() {
                   {openDaysSummary}
                 </span>
               </div>
-              {place.opening_hours?.is_24h ? (
+              {place.opening_hours?.is_24h && activeOpenDays.length === 7 ? (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-emerald-800">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -858,16 +861,18 @@ export default function PlaceDetailPage() {
                   { key: 'sunday', day: 'Chủ Nhật', schedule: place.opening_hours?.sunday },
                 ].map((item, idx) => {
                   const isDayClosed = !activeOpenDays.includes(item.key) || item.schedule?.is_closed;
-                  const intervalsText = formatDayIntervals(item.schedule);
+                  const intervalsText = place.opening_hours?.is_24h
+                    ? (isDayClosed ? 'Nghỉ' : 'Mở 24h')
+                    : formatDayIntervals(item.schedule);
                   return (
-                    <div key={idx} className="flex justify-between items-center py-1 border-b border-gray-100 last:border-none gap-2">
+                    <div key={idx} className="flex justify-between items-baseline py-1.5 border-b border-gray-100 last:border-none gap-3">
                       <span className="text-gray-600 flex-shrink-0">{item.day}</span>
                       {isDayClosed || intervalsText === 'Nghỉ' ? (
                         <span className="font-semibold text-rose-500 bg-rose-50 px-2 py-0.5 rounded text-[11px]">
                           Nghỉ
                         </span>
                       ) : (
-                        <span className="font-semibold text-gray-900 text-right text-xs">
+                        <span className="font-semibold text-gray-900 text-right text-xs leading-relaxed">
                           {intervalsText}
                         </span>
                       )}

@@ -8,6 +8,7 @@ import { formatDistance } from '@/lib/utils/distance';
 import { Star, MapPin, Heart, ArrowRight } from 'lucide-react';
 import { store } from '@/lib/data/store';
 import { useToast } from '@/components/common/Toast';
+import { getOpeningStatus } from '@/lib/utils/hours';
 
 interface PlaceCardProps {
   place: Place;
@@ -49,6 +50,7 @@ export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: Pla
   };
 
   const priceSymbol = '$'.repeat(place.price_level || 2);
+  const isPlaceOpen = place.is_open ?? (place.opening_hours ? getOpeningStatus(place.opening_hours).isOpen : true);
 
   return (
     <div
@@ -145,10 +147,10 @@ export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: Pla
             <div className="flex items-center gap-2">
               <span
                 className={`text-[11px] font-medium ${
-                  place.is_open ? 'text-emerald-600' : 'text-rose-500'
+                  isPlaceOpen ? 'text-emerald-600' : 'text-rose-500'
                 }`}
               >
-                {place.is_open ? 'Mở cửa' : 'Đóng cửa'}
+                {isPlaceOpen ? 'Mở cửa' : 'Đóng cửa'}
               </span>
               <span className="text-gray-300">•</span>
               <button
