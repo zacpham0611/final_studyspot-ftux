@@ -12,7 +12,8 @@ export async function middleware(request: NextRequest) {
   const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
 
   const userRoleCookie = request.cookies.get('studyspot_role')?.value?.toLowerCase();
-  const userEmailCookie = request.cookies.get('studyspot_user_email')?.value?.toLowerCase();
+  const rawEmailCookie = request.cookies.get('studyspot_user_email')?.value;
+  const userEmailCookie = rawEmailCookie ? decodeURIComponent(rawEmailCookie).toLowerCase() : '';
   const authHeader = request.headers.get('x-user-role')?.toLowerCase();
 
   let supabaseUser: { id: string; email?: string } | null = null;
