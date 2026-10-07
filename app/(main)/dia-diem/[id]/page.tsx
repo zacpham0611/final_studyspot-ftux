@@ -379,7 +379,13 @@ export default function PlaceDetailPage() {
     showToast('Cập nhật đánh giá thành công!', 'success');
   };
 
-  const filteredReviews = reviews.filter((r) =>
+  const activeReviews = reviews.filter((r) => !r.is_hidden);
+  const activeReviewCount = activeReviews.length;
+  const overallRating = activeReviewCount > 0
+    ? (Math.round((activeReviews.reduce((sum, r) => sum + r.rating, 0) / activeReviewCount) * 10) / 10).toFixed(1)
+    : null;
+
+  const filteredReviews = activeReviews.filter((r) =>
     selectedStarFilter === 'all' ? true : r.rating === selectedStarFilter
   );
 
@@ -485,10 +491,10 @@ export default function PlaceDetailPage() {
           <div className="flex items-center gap-2 pt-1">
             <div className="flex items-center text-amber-500 font-bold text-lg">
               <Star className="w-5 h-5 fill-amber-500 mr-1" />
-              {place.average_rating || 4.8}
+              {overallRating || 'Chưa có đánh giá'}
             </div>
             <span className="text-sm text-gray-500">
-              ({place.review_count || reviews.length} lượt đánh giá từ FTUer)
+              ({activeReviewCount} lượt đánh giá từ FTUer)
             </span>
             <span className="text-gray-300">•</span>
             <span className="text-sm text-gray-500">{place.view_count} lượt xem</span>
