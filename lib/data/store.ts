@@ -520,6 +520,7 @@ class StudySpotStore {
       const crowd = calculateCrowdStatus(placeCheckins);
       const distance = calculateDistance(place.lat, place.lng, targetLat, targetLng);
       const hours = getOpeningStatus(place.opening_hours);
+      const isOpen = hours.isOpen;
       const placeReviews = this.reviews.filter((r) => r.place_id === place.id && !r.is_hidden);
       const avgRating =
         placeReviews.length > 0
@@ -540,10 +541,10 @@ class StudySpotStore {
         category: cat,
         creator: creator || null,
         distance_meters: distance,
-        crowd_score: crowd.score ?? undefined,
-        crowd_status: crowd.status,
-        crowd_label: crowd.label,
-        is_open: hours.isOpen,
+        crowd_score: isOpen ? (crowd.score ?? undefined) : undefined,
+        crowd_status: isOpen ? crowd.status : 'unknown',
+        crowd_label: isOpen ? crowd.label : undefined,
+        is_open: isOpen,
         is_late_night: hours.isLateNight,
         average_rating: avgRating,
         review_count: placeReviews.length,

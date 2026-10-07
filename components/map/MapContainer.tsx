@@ -7,6 +7,7 @@ import L from 'leaflet';
 import { Place } from '@/lib/types/database';
 import { FTU_COORDINATES, formatDistance } from '@/lib/utils/distance';
 import { getCachedFtuMarkerIcon, getCachedPlaceMarkerIcon } from './MarkerIcons';
+import { getOpeningStatus } from '@/lib/utils/hours';
 import Link from 'next/link';
 import { Star, MapPin, ArrowRight } from 'lucide-react';
 
@@ -125,10 +126,12 @@ const PlaceMarker = React.memo(function PlaceMarker({
   onSelectPlace,
   markerRefs,
 }: PlaceMarkerProps) {
+  const isPlaceOpen = place.is_open ?? (place.opening_hours ? getOpeningStatus(place.opening_hours).isOpen : true);
   const markerIcon = getCachedPlaceMarkerIcon(
     place.crowd_status,
     isSelected,
-    place.price_level
+    place.price_level,
+    isPlaceOpen
   );
 
   return (
@@ -195,6 +198,7 @@ const PlaceMarker = React.memo(function PlaceMarker({
     prev.isSelected === next.isSelected &&
     prev.place.id === next.place.id &&
     prev.place.crowd_status === next.place.crowd_status &&
+    prev.place.is_open === next.place.is_open &&
     prev.place.lat === next.place.lat &&
     prev.place.lng === next.place.lng &&
     prev.place.average_rating === next.place.average_rating &&

@@ -391,17 +391,24 @@ export default function PlaceDetailPage() {
 
   const hourlyCrowdData = store.getHourlyCrowdData(place.id, checkins, place.opening_hours);
   const realTimeCrowd = calculateCrowdStatus(checkins);
-  const currentCrowdStatus = realTimeCrowd.status !== 'unknown' ? realTimeCrowd.status : (place.crowd_status || 'unknown');
-  const currentCrowdLabel = realTimeCrowd.status !== 'unknown' ? realTimeCrowd.label : (place.crowd_label || 'Chưa có dữ liệu');
-  const currentCrowdScore = realTimeCrowd.score !== null ? realTimeCrowd.score : place.crowd_score;
+  const currentHoursStatus = getOpeningStatus(place.opening_hours);
+  const isPlaceOpen = place.is_open ?? currentHoursStatus.isOpen;
+  const isPlaceLateNight = place.is_late_night ?? currentHoursStatus.isLateNight;
+
+  const currentCrowdStatus = isPlaceOpen
+    ? (realTimeCrowd.status !== 'unknown' ? realTimeCrowd.status : (place.crowd_status || 'unknown'))
+    : 'unknown';
+  const currentCrowdLabel = isPlaceOpen
+    ? (realTimeCrowd.status !== 'unknown' ? realTimeCrowd.label : (place.crowd_label || 'Chưa có dữ liệu'))
+    : null;
+  const currentCrowdScore = isPlaceOpen
+    ? (realTimeCrowd.score !== null ? realTimeCrowd.score : place.crowd_score)
+    : null;
 
   const placePriceRanges = getPriceRangesFromPlace(place);
   const priceSymbol = placePriceRanges.length === 1 && placePriceRanges[0] === 'Miễn phí' ? '0đ' : '$'.repeat(place.price_level || 2);
   const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
   const openDaysSummary = formatOpenDaysText(place.opening_hours);
-  const currentHoursStatus = getOpeningStatus(place.opening_hours);
-  const isPlaceOpen = place.is_open ?? currentHoursStatus.isOpen;
-  const isPlaceLateNight = place.is_late_night ?? currentHoursStatus.isLateNight;
 
   return (
     <motion.div
@@ -434,23 +441,25 @@ export default function PlaceDetailPage() {
             </span>
 
             {/* Real-time Crowd Badge */}
-            <div
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold shadow-sm ${
-                currentCrowdStatus === 'empty'
-                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  : currentCrowdStatus === 'medium'
-                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                  : currentCrowdStatus === 'full'
-                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                  : 'bg-gray-100 text-gray-800 border border-gray-300'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full animate-pulse bg-current"></span>
-              <span>Độ đông: {currentCrowdLabel}</span>
-              {currentCrowdScore !== undefined && currentCrowdScore !== null && (
-                <span className="text-[10px] opacity-75">({currentCrowdScore.toFixed(1)}/3)</span>
-              )}
-            </div>
+            {isPlaceOpen && currentCrowdLabel && (
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold shadow-sm ${
+                  currentCrowdStatus === 'empty'
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : currentCrowdStatus === 'medium'
+                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                    : currentCrowdStatus === 'full'
+                    ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                    : 'bg-gray-100 text-gray-800 border border-gray-300'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full animate-pulse bg-current"></span>
+                <span>Độ đông: {currentCrowdLabel}</span>
+                {currentCrowdScore !== undefined && currentCrowdScore !== null && (
+                  <span className="text-[10px] opacity-75">({currentCrowdScore.toFixed(1)}/3)</span>
+                )}
+              </div>
+            )}
 
             {/* Open / Closed Badge */}
             <span

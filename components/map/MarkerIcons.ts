@@ -59,9 +59,11 @@ const CROWD_COLORS: Record<CrowdStatus, string> = {
 export function createPlaceMarkerIcon(
   crowdStatus: CrowdStatus = 'unknown',
   isSelected: boolean = false,
-  priceLevel: number = 2
+  priceLevel: number = 2,
+  isOpen: boolean = true
 ) {
-  const color = CROWD_COLORS[crowdStatus] || '#9CA3AF';
+  const effectiveStatus = isOpen ? crowdStatus : 'unknown';
+  const color = CROWD_COLORS[effectiveStatus] || '#9CA3AF';
   const size = isSelected ? 40 : 32;
   const borderWidth = isSelected ? 3 : 2;
 
@@ -120,12 +122,14 @@ const placeMarkerIconCache = new Map<string, L.DivIcon>();
 export function getCachedPlaceMarkerIcon(
   crowdStatus: CrowdStatus = 'unknown',
   isSelected: boolean = false,
-  priceLevel: number = 2
+  priceLevel: number = 2,
+  isOpen: boolean = true
 ): L.DivIcon {
-  const key = `${crowdStatus || 'unknown'}_${isSelected ? 1 : 0}`;
+  const effectiveStatus = isOpen ? (crowdStatus || 'unknown') : 'unknown';
+  const key = `${effectiveStatus}_${isSelected ? 1 : 0}`;
   let icon = placeMarkerIconCache.get(key);
   if (!icon) {
-    icon = createPlaceMarkerIcon(crowdStatus, isSelected, priceLevel);
+    icon = createPlaceMarkerIcon(effectiveStatus, isSelected, priceLevel, isOpen);
     placeMarkerIconCache.set(key, icon);
   }
   return icon;

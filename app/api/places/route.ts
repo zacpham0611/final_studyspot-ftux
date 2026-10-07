@@ -96,6 +96,7 @@ export async function GET(request: NextRequest) {
           const pCheckins = placeCheckinsMap[dp.id] || store.getCheckinsForPlace(dp.id) || [];
           const crowd = calculateCrowdStatus(pCheckins);
           const hoursStatus = getOpeningStatus(parsedHours);
+          const isOpen = hoursStatus.isOpen;
           const computedRanges = getPriceRangesFromPlace({
             ...dp,
             opening_hours: parsedHours,
@@ -109,10 +110,10 @@ export async function GET(request: NextRequest) {
             images: dp.images || [],
             view_count: dp.view_count || 0,
             amenities: resolvedAmenities,
-            crowd_score: crowd.score ?? undefined,
-            crowd_status: crowd.status,
-            crowd_label: crowd.label,
-            is_open: hoursStatus.isOpen,
+            crowd_score: isOpen ? (crowd.score ?? undefined) : undefined,
+            crowd_status: isOpen ? crowd.status : 'unknown',
+            crowd_label: isOpen ? crowd.label : undefined,
+            is_open: isOpen,
             is_late_night: hoursStatus.isLateNight,
           };
         });

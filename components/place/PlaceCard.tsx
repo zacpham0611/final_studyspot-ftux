@@ -77,21 +77,23 @@ export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: Pla
           />
 
           {/* Crowd Badge Overlay */}
-          <div className="absolute top-1.5 left-1.5">
-            <span
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow text-white ${
-                place.crowd_status === 'empty'
-                  ? 'bg-emerald-500'
-                  : place.crowd_status === 'medium'
-                  ? 'bg-amber-500'
-                  : place.crowd_status === 'full'
-                  ? 'bg-rose-500'
-                  : 'bg-gray-500'
-              }`}
-            >
-              {place.crowd_label || 'Chưa có data'}
-            </span>
-          </div>
+          {isPlaceOpen && (
+            <div className="absolute top-1.5 left-1.5">
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow text-white ${
+                  place.crowd_status === 'empty'
+                    ? 'bg-emerald-500'
+                    : place.crowd_status === 'medium'
+                    ? 'bg-amber-500'
+                    : place.crowd_status === 'full'
+                    ? 'bg-rose-500'
+                    : 'bg-gray-500'
+                }`}
+              >
+                {place.crowd_label || 'Chưa có data'}
+              </span>
+            </div>
+          )}
 
           {/* Favorite Heart Button */}
           <button
