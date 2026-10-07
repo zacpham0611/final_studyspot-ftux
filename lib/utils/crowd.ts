@@ -8,6 +8,7 @@ export interface CrowdCalculationResult {
   checkinCount: number;
   latestNote?: string;
   updatedAt?: string;
+  isEstimated?: boolean;
 }
 
 export const CROWD_CONFIG = {
@@ -41,7 +42,7 @@ export const CROWD_CONFIG = {
     color: '#9CA3AF',
     bgColor: '#F3F4F6',
     borderColor: '#E5E7EB',
-    description: 'Chưa có lượt check-in nào trong 90 phút qua',
+    description: 'Chưa có lượt check-in nào trong hệ thống',
   },
 };
 
@@ -49,6 +50,10 @@ export const CROWD_CONFIG = {
  * Calculates crowd score and status from checkins in the last 90 minutes.
  * Weight decreases linearly: weight = 1 - (minutes_ago / 90)
  * Score = sum(level * weight) / sum(weight)
+ *
+ * If no check-ins exist in the last 90 minutes, falls back to cumulative
+ * historical check-in data (current time slot ±1h or overall historical average)
+ * so markers and cards show an accurate estimated crowd level.
  */
 export function calculateCrowdStatus(
   checkins: Checkin[] = [],
@@ -65,12 +70,53 @@ export function calculateCrowdStatus(
   });
 
   if (recentCheckins.length === 0) {
+    if (checkins.length > 0) {
+      // Vietnam timezone hour (UTC+7)
+      const vnFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour: 'numeric',
+        hour12: false,
+      });
+      const currentHour = parseInt(vnFormatter.format(currentTime), 10);
+
+      // Look for check-ins in the same time slot (currentHour ± 1 hour)
+      const slotCheckins = checkins.filter((c) => {
+        const d = new Date(c.created_at);
+        const h = parseInt(vnFormatter.format(d), 10);
+        const diff = Math.abs(h - currentHour);
+        return diff <= 1 || diff === 23;
+      });
+
+      const effectiveCheckins = slotCheckins.length > 0 ? slotCheckins : checkins;
+      const avgScore = effectiveCheckins.reduce((sum, c) => sum + c.level, 0) / effectiveCheckins.length;
+
+      let estimatedStatus: CrowdStatus = 'empty';
+      if (avgScore < 1.67) {
+        estimatedStatus = 'empty';
+      } else if (avgScore <= 2.33) {
+        estimatedStatus = 'medium';
+      } else {
+        estimatedStatus = 'full';
+      }
+
+      const roundedScore = Math.round(avgScore * 100) / 100;
+      return {
+        score: roundedScore,
+        status: estimatedStatus,
+        label: `${CROWD_CONFIG[estimatedStatus].label} (Ước tính)`,
+        color: CROWD_CONFIG[estimatedStatus].color,
+        checkinCount: effectiveCheckins.length,
+        isEstimated: true,
+      };
+    }
+
     return {
       score: null,
       status: 'unknown',
       label: CROWD_CONFIG.unknown.label,
       color: CROWD_CONFIG.unknown.color,
       checkinCount: 0,
+      isEstimated: false,
     };
   }
 

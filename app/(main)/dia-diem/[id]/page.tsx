@@ -83,122 +83,135 @@ export default function PlaceDetailPage() {
     let p = store.getPlaceById(placeId);
     if (p) {
       setPlace(p);
+      setIsFavorite(store.isFavorite(placeId, currentUser?.id));
+      setSimilarPlaces(store.getSimilarPlaces(placeId, 3));
+      setReviews(store.getReviewsForPlace(placeId));
+      setCheckins(store.getCheckinsForPlace(placeId));
     }
 
-    // 1. Authoritative fetch of fresh place from API to ensure complete amenities mapping
-    try {
-      const placeRes = await fetch(`/api/places?id=${encodeURIComponent(placeId)}`, { cache: 'no-store' });
-      if (placeRes.ok) {
-        const placeJson = await placeRes.json();
-        const freshPlace = placeJson.place || (Array.isArray(placeJson.places) ? placeJson.places[0] : null);
-        if (freshPlace) {
-          p = freshPlace;
-          setPlace(freshPlace);
-          store.savePlace(freshPlace);
+    // 1. Task: Authoritative fetch of fresh place from API to ensure complete amenities mapping
+    const fetchPlacePromise = (async () => {
+      try {
+        const placeRes = await fetch(`/api/places?id=${encodeURIComponent(placeId)}`, { cache: 'no-store' });
+        if (placeRes.ok) {
+          const placeJson = await placeRes.json();
+          const freshPlace = placeJson.place || (Array.isArray(placeJson.places) ? placeJson.places[0] : null);
+          if (freshPlace) {
+            p = freshPlace;
+            setPlace(freshPlace);
+            store.savePlace(freshPlace);
+            return freshPlace;
+          }
         }
+      } catch (placeErr) {}
+
+      // Fallback: direct Supabase query for place_amenities if p has no amenities
+      if (p && (!p.amenities || p.amenities.length === 0)) {
+        try {
+          const { data: paData } = await supabase
+            .from('place_amenities')
+            .select('amenity_id, amenity:amenities(*)')
+            .eq('place_id', placeId);
+          if (paData && Array.isArray(paData) && paData.length > 0) {
+            const loadedAms = paData.map((r: any) => r.amenity).filter(Boolean);
+            if (loadedAms.length > 0) {
+              p = { ...p, amenities: loadedAms };
+              setPlace(p);
+              store.savePlace(p);
+              return p;
+            }
+          }
+        } catch (e) {}
       }
-    } catch (placeErr) {}
+      return p;
+    })();
 
-    // Fallback: direct Supabase query for place_amenities if p has no amenities
-    if (p && (!p.amenities || p.amenities.length === 0)) {
+    // 2. Task: Authoritative reviews fetch with fallback
+    const fetchReviewsPromise = (async () => {
       try {
-        const { data: paData } = await supabase
-          .from('place_amenities')
-          .select('amenity_id, amenity:amenities(*)')
-          .eq('place_id', placeId);
-        if (paData && Array.isArray(paData) && paData.length > 0) {
-          const loadedAms = paData.map((r: any) => r.amenity).filter(Boolean);
-          if (loadedAms.length > 0) {
-            p = { ...p, amenities: loadedAms };
-            setPlace(p);
-            store.savePlace(p);
+        let supaReviews: any[] | null = null;
+        try {
+          const revRes = await fetch(`/api/reviews?placeId=${encodeURIComponent(placeId)}`, { cache: 'no-store' });
+          if (revRes.ok) {
+            const revJson = await revRes.json();
+            if (Array.isArray(revJson.reviews)) {
+              supaReviews = revJson.reviews;
+            }
           }
-        }
-      } catch (e) {}
-    }
+        } catch (apiErr) {}
 
-    if (!p) return;
-
-    try {
-      let supaReviews: any[] | null = null;
-
-      // 1. Prioritize authoritative server API route (service role access to Supabase PostgreSQL)
-      try {
-        const revRes = await fetch(`/api/reviews?placeId=${encodeURIComponent(placeId)}`, { cache: 'no-store' });
-        if (revRes.ok) {
-          const revJson = await revRes.json();
-          if (Array.isArray(revJson.reviews)) {
-            supaReviews = revJson.reviews;
-          }
-        }
-      } catch (apiErr) {}
-
-      // 2. Direct browser Supabase client fallback if API route was unreachable
-      if (!supaReviews) {
-        const { data, error } = await supabase
-          .from('reviews')
-          .select(`
-            *,
-            user:users!reviews_user_id_fkey(full_name, avatar_url)
-          `)
-          .eq('place_id', placeId)
-          .order('created_at', { ascending: false });
-
-        if (!error && data) {
-          supaReviews = data;
-        } else {
-          const { data: plainReviews } = await supabase
+        if (!supaReviews) {
+          const { data, error } = await supabase
             .from('reviews')
-            .select('*')
+            .select(`
+              *,
+              user:users!reviews_user_id_fkey(full_name, avatar_url)
+            `)
             .eq('place_id', placeId)
             .order('created_at', { ascending: false });
 
-          if (plainReviews) {
-            const userIds = Array.from(new Set(plainReviews.map((r: any) => r.user_id).filter(Boolean)));
-            let userMap: Record<string, any> = {};
-            if (userIds.length > 0) {
-              const { data: usersData } = await supabase
-                .from('users')
-                .select('id, full_name, avatar_url')
-                .in('id', userIds);
-              if (usersData) {
-                userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+          if (!error && data) {
+            supaReviews = data;
+          } else {
+            const { data: plainReviews } = await supabase
+              .from('reviews')
+              .select('*')
+              .eq('place_id', placeId)
+              .order('created_at', { ascending: false });
+
+            if (plainReviews) {
+              const userIds = Array.from(new Set(plainReviews.map((r: any) => r.user_id).filter(Boolean)));
+              let userMap: Record<string, any> = {};
+              if (userIds.length > 0) {
+                const { data: usersData } = await supabase
+                  .from('users')
+                  .select('id, full_name, avatar_url')
+                  .in('id', userIds);
+                if (usersData) {
+                  userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+                }
               }
+              supaReviews = plainReviews.map((r: any) => ({
+                ...r,
+                user: userMap[r.user_id] || null,
+              }));
             }
-            supaReviews = plainReviews.map((r: any) => ({
-              ...r,
-              user: userMap[r.user_id] || null,
-            }));
           }
         }
-      }
 
-      if (supaReviews) {
-        setReviews(supaReviews as any);
-        store.syncPlaceReviews(placeId, supaReviews as any);
-      } else {
+        if (supaReviews) {
+          setReviews(supaReviews as any);
+          store.syncPlaceReviews(placeId, supaReviews as any);
+        } else {
+          setReviews(store.getReviewsForPlace(placeId));
+        }
+      } catch {
         setReviews(store.getReviewsForPlace(placeId));
       }
-    } catch {
-      setReviews(store.getReviewsForPlace(placeId));
-    }
+    })();
 
-    try {
-      const { data: supaCheckins, error: checkinErr } = await supabase
-        .from('checkins')
-        .select('*')
-        .eq('place_id', placeId)
-        .order('created_at', { ascending: false });
+    // 3. Task: Checkins fetch
+    const fetchCheckinsPromise = (async () => {
+      try {
+        const { data: supaCheckins, error: checkinErr } = await supabase
+          .from('checkins')
+          .select('*')
+          .eq('place_id', placeId)
+          .order('created_at', { ascending: false });
 
-      if (!checkinErr && supaCheckins) {
-        setCheckins(supaCheckins);
-        store.syncPlaceCheckins(placeId, supaCheckins);
-      } else {
+        if (!checkinErr && supaCheckins) {
+          setCheckins(supaCheckins);
+          store.syncPlaceCheckins(placeId, supaCheckins);
+        } else {
+          setCheckins(store.getCheckinsForPlace(placeId));
+        }
+      } catch {
         setCheckins(store.getCheckinsForPlace(placeId));
       }
-    } catch {
-      setCheckins(store.getCheckinsForPlace(placeId));
-    }
+    })();
+
+    // Run all 3 independent requests in parallel
+    await Promise.all([fetchPlacePromise, fetchReviewsPromise, fetchCheckinsPromise]);
 
     setIsFavorite(store.isFavorite(placeId, currentUser?.id));
     setSimilarPlaces(store.getSimilarPlaces(placeId, 3));

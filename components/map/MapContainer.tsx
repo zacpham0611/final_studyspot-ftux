@@ -6,7 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Place } from '@/lib/types/database';
 import { FTU_COORDINATES, formatDistance } from '@/lib/utils/distance';
-import { createFtuMarkerIcon, createPlaceMarkerIcon } from './MarkerIcons';
+import { getCachedFtuMarkerIcon, getCachedPlaceMarkerIcon } from './MarkerIcons';
 import Link from 'next/link';
 import { Star, MapPin, ArrowRight } from 'lucide-react';
 
@@ -111,6 +111,100 @@ function MapFlyController({
   return null;
 }
 
+// Memoized Place Marker to prevent unnecessary re-rendering and DOM thrashing
+interface PlaceMarkerProps {
+  place: Place;
+  isSelected: boolean;
+  onSelectPlace?: (place: Place) => void;
+  markerRefs: React.MutableRefObject<Record<string, L.Marker | null>>;
+}
+
+const PlaceMarker = React.memo(function PlaceMarker({
+  place,
+  isSelected,
+  onSelectPlace,
+  markerRefs,
+}: PlaceMarkerProps) {
+  const markerIcon = getCachedPlaceMarkerIcon(
+    place.crowd_status,
+    isSelected,
+    place.price_level
+  );
+
+  return (
+    <Marker
+      position={[place.lat, place.lng]}
+      icon={markerIcon}
+      ref={(ref) => {
+        if (ref) markerRefs.current[place.id] = ref;
+      }}
+      eventHandlers={{
+        click: () => {
+          if (onSelectPlace) {
+            onSelectPlace(place);
+          }
+        },
+      }}
+    >
+      <Popup className="custom-leaflet-popup">
+        <div className="p-2 min-w-[220px] max-w-[260px] space-y-2">
+          <div className="relative rounded-lg overflow-hidden h-24 bg-slate-100">
+            <img
+              src={
+                place.images[0] ||
+                'https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=600&q=80'
+              }
+              alt={place.name}
+              className="w-full h-full object-cover"
+            />
+            {place.average_rating && (
+              <div className="absolute bottom-1.5 left-1.5 bg-black/75 backdrop-blur-xs text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
+                <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
+                <span>{place.average_rating.toFixed(1)}</span>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h4 className="font-bold text-xs text-gray-900 leading-tight">
+              {place.name}
+            </h4>
+            <p className="text-[11px] text-gray-500 flex items-center gap-1 mt-1 truncate">
+              <MapPin className="w-3 h-3 text-burgundy flex-shrink-0" />
+              <span>{place.address}</span>
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border">
+            <span className="font-semibold text-burgundy">
+              {formatDistance(place.distance_meters || 0)} từ FTU
+            </span>
+            <Link
+              href={`/dia-diem/${place.id}`}
+              className="font-bold text-burgundy hover:text-burgundy-hover flex items-center gap-0.5"
+            >
+              Chi tiết <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
+        </div>
+      </Popup>
+    </Marker>
+  );
+}, (prev, next) => {
+  return (
+    prev.isSelected === next.isSelected &&
+    prev.place.id === next.place.id &&
+    prev.place.crowd_status === next.place.crowd_status &&
+    prev.place.lat === next.place.lat &&
+    prev.place.lng === next.place.lng &&
+    prev.place.average_rating === next.place.average_rating &&
+    prev.place.images[0] === next.place.images[0] &&
+    prev.place.name === next.place.name &&
+    prev.place.address === next.place.address &&
+    prev.place.distance_meters === next.place.distance_meters
+  );
+});
+
 export default function MapContainer({
   places = [],
   selectedPlaceId,
@@ -154,7 +248,7 @@ export default function MapContainer({
         {/* Foreign Trade University Central Marker - Burgundy #8A1538 */}
         <Marker
           position={[FTU_COORDINATES.lat, FTU_COORDINATES.lng]}
-          icon={createFtuMarkerIcon()}
+          icon={getCachedFtuMarkerIcon()}
         >
           <Popup className="custom-leaflet-popup">
             <div className="p-2 text-center max-w-[200px]">
@@ -172,72 +266,14 @@ export default function MapContainer({
           if (!place || typeof place.lat !== 'number' || typeof place.lng !== 'number' || isNaN(place.lat) || isNaN(place.lng)) {
             return null;
           }
-          const isSelected = place.id === selectedPlaceId;
-          const markerIcon = createPlaceMarkerIcon(
-            place.crowd_status,
-            isSelected,
-            place.price_level
-          );
-
           return (
-            <Marker
+            <PlaceMarker
               key={place.id}
-              position={[place.lat, place.lng]}
-              icon={markerIcon}
-              ref={(ref) => {
-                if (ref) markerRefs.current[place.id] = ref;
-              }}
-              eventHandlers={{
-                click: () => {
-                  if (onSelectPlace) {
-                    onSelectPlace(place);
-                  }
-                },
-              }}
-            >
-              <Popup className="custom-leaflet-popup">
-                <div className="p-2 min-w-[220px] max-w-[260px] space-y-2">
-                  <div className="relative rounded-lg overflow-hidden h-24 bg-slate-100">
-                    <img
-                      src={
-                        place.images[0] ||
-                        'https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=600&q=80'
-                      }
-                      alt={place.name}
-                      className="w-full h-full object-cover"
-                    />
-                    {place.average_rating && (
-                      <div className="absolute bottom-1.5 left-1.5 bg-black/75 backdrop-blur-xs text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-                        <span>{place.average_rating.toFixed(1)}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <h4 className="font-bold text-xs text-gray-900 leading-tight">
-                      {place.name}
-                    </h4>
-                    <p className="text-[11px] text-gray-500 flex items-center gap-1 mt-1 truncate">
-                      <MapPin className="w-3 h-3 text-burgundy flex-shrink-0" />
-                      <span>{place.address}</span>
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border">
-                    <span className="font-semibold text-burgundy">
-                      {formatDistance(place.distance_meters || 0)} từ FTU
-                    </span>
-                    <Link
-                      href={`/dia-diem/${place.id}`}
-                      className="font-bold text-burgundy hover:text-burgundy-hover flex items-center gap-0.5"
-                    >
-                      Chi tiết <ArrowRight className="w-3 h-3" />
-                    </Link>
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
+              place={place}
+              isSelected={place.id === selectedPlaceId}
+              onSelectPlace={onSelectPlace}
+              markerRefs={markerRefs}
+            />
           );
         })}
       </LeafletMap>

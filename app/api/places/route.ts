@@ -3,6 +3,9 @@ import { store } from '@/lib/data/store';
 import { createClient } from '@supabase/supabase-js';
 import { INITIAL_CATEGORIES } from '@/lib/data/mockData';
 import { getOpeningStatus } from '@/lib/utils/hours';
+import { getPriceRangesFromPlace, calculatePriceLevel, normalizePriceRange } from '@/lib/utils/price';
+import { calculateCrowdStatus } from '@/lib/utils/crowd';
+import { createClient as createServerSupabase } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -44,11 +47,13 @@ export async function GET(request: NextRequest) {
         // Fetch place_amenities mapping for these places
         const placeIds = data.map((dp: any) => dp.id).filter(Boolean);
         let placeAmenitiesMap: Record<string, any[]> = {};
+        let placeCheckinsMap: Record<string, any[]> = {};
         if (placeIds.length > 0) {
           try {
-            const [paRes, amRes] = await Promise.all([
+            const [paRes, amRes, ckRes] = await Promise.all([
               supabaseAdmin.from('place_amenities').select('place_id, amenity_id').in('place_id', placeIds),
               supabaseAdmin.from('amenities').select('*').order('id', { ascending: true }),
+              supabaseAdmin.from('checkins').select('*').in('place_id', placeIds).order('created_at', { ascending: false }),
             ]);
 
             const allAmenities = (amRes.data && amRes.data.length > 0) ? amRes.data : store.getAmenities();
@@ -70,23 +75,43 @@ export async function GET(request: NextRequest) {
                 }
               }
             }
+
+            if (ckRes.data && Array.isArray(ckRes.data)) {
+              for (const row of ckRes.data) {
+                const pId = String(row.place_id);
+                if (!placeCheckinsMap[pId]) {
+                  placeCheckinsMap[pId] = [];
+                }
+                placeCheckinsMap[pId].push(row);
+              }
+            }
           } catch (paErr) {
-            console.warn('GET /api/places place_amenities mapping notice:', paErr);
+            console.warn('GET /api/places mapping notice:', paErr);
           }
         }
 
         let places = data.map((dp: any) => {
           const parsedHours = typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : dp.opening_hours;
           const resolvedAmenities = placeAmenitiesMap[dp.id] || (Array.isArray(dp.amenities) ? dp.amenities : []);
+          const pCheckins = placeCheckinsMap[dp.id] || store.getCheckinsForPlace(dp.id) || [];
+          const crowd = calculateCrowdStatus(pCheckins);
           const hoursStatus = getOpeningStatus(parsedHours);
+          const computedRanges = getPriceRangesFromPlace({
+            ...dp,
+            opening_hours: parsedHours,
+          });
+          const calculatedLevel = computedRanges.length > 0 ? calculatePriceLevel(computedRanges) : (dp.price_level || 2);
           return {
             ...dp,
             opening_hours: parsedHours,
-            price_ranges: dp.price_ranges || parsedHours?.price_ranges || [],
-            price_level: dp.price_level || 2,
+            price_ranges: computedRanges,
+            price_level: calculatedLevel,
             images: dp.images || [],
             view_count: dp.view_count || 0,
             amenities: resolvedAmenities,
+            crowd_score: crowd.score ?? undefined,
+            crowd_status: crowd.status,
+            crowd_label: crowd.label,
             is_open: hoursStatus.isOpen,
             is_late_night: hoursStatus.isLateNight,
           };
@@ -181,7 +206,41 @@ async function resolveCategoryFromSupabase(
   return null;
 }
 
-const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin123@ftu.edu.vn').toLowerCase();
+const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || '').toLowerCase();
+
+async function getSupabaseAdminClient(request?: NextRequest) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  // Server-side privilege check: use service role key if securely configured in server environment
+  if (serviceRoleKey) {
+    return createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  }
+
+  // Priority A: Authorization: Bearer <access_token> from request header
+  const authHeader = request?.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false },
+    });
+  }
+
+  // Priority B: Supabase SSR session cookie from request
+  if (request) {
+    try {
+      const serverClient = createServerSupabase();
+      const { data: { session } } = await serverClient.auth.getSession();
+      if (session?.access_token) {
+        return serverClient;
+      }
+    } catch (e) {}
+  }
+
+  // Fallback: standard unauthenticated client (no credentials, no manual sign-in, no token caching)
+  return createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -217,12 +276,9 @@ export async function POST(request: NextRequest) {
 
     // 1. Persist directly to Supabase public.places
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
-      const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-        auth: { persistSession: false },
-      });
+    if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
+      const supabaseAdmin = await getSupabaseAdminClient(request);
 
       // Validate created_by foreign key to prevent PostgreSQL foreign key violation
       let validCreatedBy: string | null = null;
@@ -291,6 +347,18 @@ export async function POST(request: NextRequest) {
         type: typeof validCatId,
       });
 
+      let finalOpeningHours = opening_hours || null;
+      if (body.price_ranges && Array.isArray(body.price_ranges) && body.price_ranges.length > 0) {
+        if (typeof finalOpeningHours === 'object' && finalOpeningHours !== null) {
+          finalOpeningHours = { ...finalOpeningHours, price_ranges: body.price_ranges };
+        } else {
+          finalOpeningHours = { price_ranges: body.price_ranges };
+        }
+      }
+
+      const effectivePriceRanges = body.price_ranges || finalOpeningHours?.price_ranges || [];
+      const calculatedLevel = effectivePriceRanges.length > 0 ? calculatePriceLevel(effectivePriceRanges) : (Number(price_level) || 2);
+
       const insertPayload: any = {
         name: name.trim(),
         category_id: validCatId,
@@ -298,8 +366,8 @@ export async function POST(request: NextRequest) {
         lat: createdLat,
         lng: createdLng,
         description: description?.trim() || '',
-        opening_hours: opening_hours || null,
-        price_level: Number(price_level) || 2,
+        opening_hours: finalOpeningHours,
+        price_level: calculatedLevel,
         images: images && Array.isArray(images) ? images : [],
         status: placeStatus,
         created_by: validCreatedBy,
@@ -342,10 +410,11 @@ export async function POST(request: NextRequest) {
         if (placeStatus === 'pending') {
           try {
             // Find all Admin users in public.users
+            const adminFilter = ADMIN_EMAIL ? `role.eq.admin,email.ilike.${ADMIN_EMAIL}` : 'role.eq.admin';
             const { data: admins } = await supabaseAdmin
               .from('users')
               .select('id')
-              .or(`role.eq.admin,email.ilike.${ADMIN_EMAIL}`);
+              .or(adminFilter);
 
             let targetAdmins = admins && admins.length > 0 ? admins : [];
 
@@ -354,12 +423,12 @@ export async function POST(request: NextRequest) {
               try {
                 const { data: authList } = await supabaseAdmin.auth.admin.listUsers();
                 const authAdmin = authList?.users?.find(
-                  (u) => u.email?.toLowerCase() === ADMIN_EMAIL || u.user_metadata?.role === 'admin'
+                  (u) => (ADMIN_EMAIL && u.email?.toLowerCase() === ADMIN_EMAIL) || u.user_metadata?.role === 'admin'
                 );
                 if (authAdmin) {
                   await supabaseAdmin.from('users').upsert({
                     id: authAdmin.id,
-                    email: authAdmin.email || ADMIN_EMAIL,
+                    email: authAdmin.email || (ADMIN_EMAIL || 'admin@studyspot.ftu.edu.vn'),
                     full_name: authAdmin.user_metadata?.full_name || 'Admin StudySpot',
                     role: 'admin',
                   });
@@ -368,7 +437,7 @@ export async function POST(request: NextRequest) {
               } catch (authErr) {}
             }
 
-            if (targetAdmins.length === 0) {
+            if (targetAdmins.length === 0 && ADMIN_EMAIL) {
               const defaultAdminId = 'a0000000-0000-0000-0000-000000000001';
               await supabaseAdmin.from('users').upsert({
                 id: defaultAdminId,
@@ -479,6 +548,20 @@ export async function PATCH(request: NextRequest) {
       if (body.price_ranges !== undefined && typeof editFields.opening_hours === 'object' && editFields.opening_hours !== null) {
         editFields.opening_hours.price_ranges = body.price_ranges;
       }
+    } else if (body.price_ranges !== undefined) {
+      const existingPlace = store.getPlaceById(placeId);
+      const existingHours = existingPlace?.opening_hours || {};
+      editFields.opening_hours = {
+        ...(typeof existingHours === 'object' && existingHours !== null ? existingHours : {}),
+        price_ranges: body.price_ranges,
+      };
+    }
+
+    if (body.price_ranges !== undefined && Array.isArray(body.price_ranges)) {
+      editFields.price_ranges = body.price_ranges;
+      if (editFields.price_level === undefined) {
+        editFields.price_level = calculatePriceLevel(body.price_ranges);
+      }
     }
 
     if (Object.keys(editFields).length > 0) {
@@ -487,15 +570,42 @@ export async function PATCH(request: NextRequest) {
 
     // 2. Persist directly to Supabase public.places
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
+    if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
       try {
-        const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-          auth: { persistSession: false },
-        });
+        const supabaseAdmin = await getSupabaseAdminClient(request);
+
+        // Fetch existing row from Supabase to preserve schedule and data integrity
+        const { data: dbRow } = await supabaseAdmin
+          .from('places')
+          .select('*')
+          .eq('id', targetPlaceId)
+          .maybeSingle();
+
+        const dbHours = (typeof dbRow?.opening_hours === 'string'
+          ? JSON.parse(dbRow.opening_hours)
+          : dbRow?.opening_hours) || (store.getPlaceById(targetPlaceId)?.opening_hours) || {};
+
+        let mergedHours = editFields.opening_hours
+          ? (typeof editFields.opening_hours === 'string' ? JSON.parse(editFields.opening_hours) : { ...editFields.opening_hours })
+          : { ...dbHours };
+
+        if (body.price_ranges !== undefined && Array.isArray(body.price_ranges)) {
+          const normRanges = body.price_ranges.map(normalizePriceRange).filter(Boolean);
+          mergedHours.price_ranges = normRanges;
+          editFields.price_ranges = normRanges;
+          editFields.opening_hours = mergedHours;
+          if (editFields.price_level === undefined && body.price_level === undefined) {
+            editFields.price_level = calculatePriceLevel(normRanges);
+          }
+        }
 
         const updateData: any = { ...editFields };
+        delete updateData.price_ranges; // Stored inside opening_hours JSON, not a root column in public.places
+        updateData.opening_hours = mergedHours;
+        if (editFields.price_level !== undefined) {
+          updateData.price_level = editFields.price_level;
+        }
 
         if (category_id !== undefined || body.category_name !== undefined) {
           const patchCatId = await resolveCategoryFromSupabase(
@@ -528,12 +638,28 @@ export async function PATCH(request: NextRequest) {
           .update(updateData)
           .eq('id', targetPlaceId)
           .select()
-          .single();
+          .maybeSingle();
 
-        if (error) {
+        if (error && error.code !== 'PGRST116') {
           console.error('Supabase places update error:', error.message);
           return NextResponse.json({ success: false, error: error.message }, { status: 500 });
         }
+
+        const finalPriceRanges = editFields.price_ranges || mergedHours.price_ranges || getPriceRangesFromPlace(data || dbRow);
+        const finalPriceLevel = editFields.price_level || updateData.price_level || (data?.price_level) || calculatePriceLevel(finalPriceRanges);
+
+        store.updatePlace(targetPlaceId, {
+          ...editFields,
+          opening_hours: mergedHours,
+          price_ranges: finalPriceRanges,
+          price_level: finalPriceLevel,
+        });
+
+        const effectivePlace = data || {
+          ...(dbRow || store.getPlaceById(targetPlaceId) || { id: targetPlaceId }),
+          ...editFields,
+          opening_hours: mergedHours,
+        };
 
         if (data && (status === 'approved' || status === 'rejected') && data.created_by && isUuid(data.created_by)) {
           const notifContent = status === 'approved'
@@ -563,7 +689,15 @@ export async function PATCH(request: NextRequest) {
           } catch (paErr) {}
         }
 
-        return NextResponse.json({ success: true, place: data });
+        return NextResponse.json({
+          success: true,
+          place: {
+            ...effectivePlace,
+            opening_hours: mergedHours,
+            price_ranges: finalPriceRanges,
+            price_level: finalPriceLevel,
+          },
+        });
       } catch (dbErr: any) {
         console.error('Supabase places update network error:', dbErr.message);
         return NextResponse.json({ success: false, error: dbErr.message }, { status: 500 });
@@ -591,10 +725,9 @@ export async function DELETE(request: NextRequest) {
 
     // 2. Delete from Supabase public.places
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
-      const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
+      const supabaseAdmin = await getSupabaseAdminClient(request);
       if (isUuid(placeId)) {
         await supabaseAdmin.from('place_amenities').delete().eq('place_id', placeId);
         await supabaseAdmin.from('checkins').delete().eq('place_id', placeId);

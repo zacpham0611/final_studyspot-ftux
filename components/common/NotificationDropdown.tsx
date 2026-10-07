@@ -48,7 +48,18 @@ export function NotificationDropdown({ currentUser }: NotificationDropdownProps)
     };
 
     syncServerNotifs();
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        loadNotifications();
+        syncServerNotifs();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       loadNotifications();
       syncServerNotifs();
     }, 5000);
@@ -56,6 +67,9 @@ export function NotificationDropdown({ currentUser }: NotificationDropdownProps)
     return () => {
       unsubscribe();
       clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
     };
   }, [currentUser]);
 

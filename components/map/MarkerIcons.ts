@@ -104,3 +104,29 @@ export function createPlaceMarkerIcon(
     popupAnchor: [0, -size / 2],
   });
 }
+
+// --- CACHED SINGLETON & DICTIONARY ---
+let cachedFtuMarkerIcon: L.DivIcon | null = null;
+
+export function getCachedFtuMarkerIcon(): L.DivIcon {
+  if (!cachedFtuMarkerIcon) {
+    cachedFtuMarkerIcon = createFtuMarkerIcon();
+  }
+  return cachedFtuMarkerIcon;
+}
+
+const placeMarkerIconCache = new Map<string, L.DivIcon>();
+
+export function getCachedPlaceMarkerIcon(
+  crowdStatus: CrowdStatus = 'unknown',
+  isSelected: boolean = false,
+  priceLevel: number = 2
+): L.DivIcon {
+  const key = `${crowdStatus || 'unknown'}_${isSelected ? 1 : 0}`;
+  let icon = placeMarkerIconCache.get(key);
+  if (!icon) {
+    icon = createPlaceMarkerIcon(crowdStatus, isSelected, priceLevel);
+    placeMarkerIconCache.set(key, icon);
+  }
+  return icon;
+}

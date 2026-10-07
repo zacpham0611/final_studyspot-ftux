@@ -122,29 +122,35 @@ function HomePageContent() {
     }
   }, [paramPlaceId]);
 
-  // Fetch / Refresh data
-  const loadData = () => {
+  const filterOptionsRef = useRef(filterOptions);
+  filterOptionsRef.current = filterOptions;
+
+  // Fetch / Refresh data in-memory (instant 0ms, zero network requests)
+  const loadData = React.useCallback(() => {
     setCategories(store.getCategories());
     setAmenities(store.getAmenities());
-    const filtered = store.filterPlaces(filterOptions);
+    const filtered = store.filterPlaces(filterOptionsRef.current);
     setPlaces(filtered);
-  };
+  }, []);
 
+  // When filterOptions changes (typing query, clicking chips, opening filter): ONLY filter in memory!
   useEffect(() => {
     loadData();
-    // Authoritative fetch from Supabase to guarantee cross-device sync
+  }, [filterOptions, loadData]);
+
+  // Initial authoritative fetch from Supabase + store subscription + 60s background polling
+  useEffect(() => {
+    // 1. Initial authoritative sync on mount
     store.loadFromSupabase().then(() => {
       loadData();
     });
 
+    // 2. Subscribe to store changes (updates when places/checkins/reviews change)
     const unsubscribe = store.subscribe(() => {
       loadData();
     });
-    return () => unsubscribe();
-  }, [filterOptions]);
 
-  // Polling data every 60 seconds from Supabase
-  useEffect(() => {
+    // 3. Polling every 60 seconds (completely decoupled from search typing!)
     const interval = setInterval(async () => {
       setIsRefreshing(true);
       await store.loadFromSupabase();
@@ -152,8 +158,11 @@ function HomePageContent() {
       setTimeout(() => setIsRefreshing(false), 600);
     }, 60000);
 
-    return () => clearInterval(interval);
-  }, [filterOptions]);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, [loadData]);
 
   // Synchronized interaction: Map marker clicked -> highlight card & scroll card into view
   const handleSelectFromMap = (place: Place) => {

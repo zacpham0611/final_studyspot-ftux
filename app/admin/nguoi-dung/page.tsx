@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { store } from '@/lib/data/store';
 import { UserProfile } from '@/lib/types/database';
@@ -13,8 +13,11 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserProfile[]>(() => store.getAllUsers());
   const [loading, setLoading] = useState(() => store.getAllUsers().length === 0);
 
+  const isSyncingRef = useRef(false);
+
   const loadData = async () => {
     try {
+      isSyncingRef.current = true;
       // 1. Fetch live user list via server API (bypasses RLS using Service Role & auto-syncs auth.users)
       const res = await fetch('/api/admin/users');
       if (res.ok) {
@@ -32,9 +35,14 @@ export default function AdminUsersPage() {
       }
     } catch (apiErr) {
       console.warn('API users fetch warning:', apiErr);
+    } finally {
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 50);
     }
 
     try {
+      isSyncingRef.current = true;
       // 2. Direct Supabase Client fallback
       const { data: dbUsers, error } = await supabase
         .from('users')
@@ -53,6 +61,10 @@ export default function AdminUsersPage() {
       }
     } catch (e) {
       console.warn('Supabase users load notice:', e);
+    } finally {
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 50);
     }
 
     // 3. Fallback to store
@@ -65,39 +77,31 @@ export default function AdminUsersPage() {
       if (isMounted) setLoading(false);
     });
 
-    // 1. Listen to store updates (e.g. background loadFromSupabase, local signups)
+    // 1. Listen to external store updates (ignoring triggers initiated by this page)
     const unsubscribeStore = store.subscribe(() => {
-      if (isMounted) {
+      if (isMounted && !isSyncingRef.current) {
         loadData();
       }
     });
 
-    // 2. Realtime listener for cross-device signups on public.users
+    // 2. Realtime listener for cross-device signups / updates on public.users
     const channel = supabase
       .channel('admin-users-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'users' },
         () => {
-          if (isMounted) {
+          if (isMounted && !isSyncingRef.current) {
             loadData();
           }
         }
       )
       .subscribe();
 
-    // 3. Fallback interval polling every 4s for cross-device updates if realtime is disconnected
-    const pollTimer = setInterval(() => {
-      if (isMounted) {
-        loadData();
-      }
-    }, 4000);
-
     return () => {
       isMounted = false;
       unsubscribeStore();
       supabase.removeChannel(channel);
-      clearInterval(pollTimer);
     };
   }, []);
 

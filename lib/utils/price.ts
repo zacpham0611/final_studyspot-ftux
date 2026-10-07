@@ -36,18 +36,44 @@ export function normalizePriceRange(val: string): PriceRange {
   if (!val || typeof val !== 'string') return '30.000đ – 50.000đ';
   const clean = val.replace(/\s+/g, ' ').trim().toLowerCase();
 
-  if (clean.includes('miễn phí') || clean.includes('0đ') || clean === '0') {
+  // 1. Exact match against standard list FIRST
+  const exactMatch = PRICE_RANGES.find((p) => p.toLowerCase() === clean);
+  if (exactMatch) return exactMatch;
+
+  // 2. Free / Miễn phí (strict check: DO NOT use clean.includes('0đ') because all VN prices have .000đ)
+  if (
+    clean.includes('miễn phí') ||
+    clean.includes('mien phi') ||
+    clean === '0đ' ||
+    clean === '0 đ' ||
+    clean === '0' ||
+    clean === 'free'
+  ) {
     return 'Miễn phí';
   }
-  if (clean.includes('dưới 30') || clean.includes('< 30') || clean.includes('<30')) {
+
+  // 3. Under 30k
+  if (
+    clean.includes('dưới 30') ||
+    clean.includes('duoi 30') ||
+    clean.includes('< 30') ||
+    clean.includes('<30') ||
+    clean === '< 30.000đ'
+  ) {
     return 'Dưới 30.000đ';
   }
+
+  // 4. 30k - 50k
   if (clean.includes('30') && clean.includes('50')) {
     return '30.000đ – 50.000đ';
   }
+
+  // 5. 50k - 100k
   if (clean.includes('50') && (clean.includes('80') || clean.includes('100'))) {
     return '50.000đ – 100.000đ';
   }
+
+  // 6. 100k - 200k
   if (
     (clean.includes('80') && clean.includes('120')) ||
     (clean.includes('100') && clean.includes('200')) ||
@@ -55,20 +81,23 @@ export function normalizePriceRange(val: string): PriceRange {
   ) {
     return '100.000đ – 200.000đ';
   }
-  if (clean.includes('trên 200') || clean.includes('> 200') || clean.includes('>200')) {
+
+  // 7. Above 200k
+  if (
+    clean.includes('trên 200') ||
+    clean.includes('tren 200') ||
+    clean.includes('> 200') ||
+    clean.includes('>200')
+  ) {
     return 'Trên 200.000đ';
   }
-
-  // Exact matching against standard list
-  const match = PRICE_RANGES.find((p) => p.toLowerCase() === clean);
-  if (match) return match;
 
   return '30.000đ – 50.000đ';
 }
 
 /**
  * Normalizes price ranges from a place into the 6 standard options.
- * Returns empty array if price_ranges is not present.
+ * If price_ranges is missing or empty, safely falls back to place.price_level mapping.
  */
 export function getPriceRangesFromPlace(place?: {
   price_ranges?: string[];
@@ -91,7 +120,23 @@ export function getPriceRangesFromPlace(place?: {
         deduped.add(normalizePriceRange(r));
       }
     });
-    return Array.from(deduped);
+    if (deduped.size > 0) {
+      return Array.from(deduped);
+    }
+  }
+
+  // Safe fallback based on price_level for legacy places
+  if (place.price_level != null) {
+    switch (Number(place.price_level)) {
+      case 1:
+        return ['Dưới 30.000đ'];
+      case 2:
+        return ['30.000đ – 50.000đ'];
+      case 3:
+        return ['50.000đ – 100.000đ'];
+      case 4:
+        return ['100.000đ – 200.000đ'];
+    }
   }
 
   return [];

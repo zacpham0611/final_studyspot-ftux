@@ -26,7 +26,7 @@ import { calculateCrowdStatus } from '@/lib/utils/crowd';
 import { calculateDistance, formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { getOpeningStatus, getValidHourlySlots } from '@/lib/utils/hours';
 import { matchesSearch } from '@/lib/utils/text';
-import { PRICE_RANGE_OPTIONS, getPriceRangesFromPlace, normalizePriceRange } from '@/lib/utils/price';
+import { PRICE_RANGE_OPTIONS, getPriceRangesFromPlace, normalizePriceRange, calculatePriceLevel } from '@/lib/utils/price';
 import { supabase } from '@/lib/supabase/client';
 
 export const isUuid = (str?: string | null): boolean => {
@@ -135,29 +135,47 @@ class StudySpotStore {
     }
   }
 
-  private persist() {
+  private persist(entity: 'all' | 'places' | 'categories' | 'checkins' | 'reviews' | 'notifications' | 'reports' | 'users' | 'helpful' | 'favorites' | 'currentUser' = 'all') {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('studyspot_deleted_places_v2', JSON.stringify(Array.from(this.deletedPlaceIds)));
-        localStorage.setItem('studyspot_places_v2', JSON.stringify(this.places));
-        localStorage.setItem('studyspot_categories_v2', JSON.stringify(this.categories));
-        localStorage.setItem('studyspot_checkins_v2', JSON.stringify(this.checkins));
-        localStorage.setItem('studyspot_reviews_v2', JSON.stringify(this.reviews));
-        localStorage.setItem('studyspot_notifs_v2', JSON.stringify(this.notifications));
-        localStorage.setItem('studyspot_reports_v2', JSON.stringify(this.reviewReports));
-        localStorage.setItem('studyspot_users_v2', JSON.stringify(this.users));
-        localStorage.setItem('studyspot_helpful_v2', JSON.stringify(Array.from(this.helpfulVotes)));
-        
-        const favsObj: { [k: string]: string[] } = {};
-        for (const [k, v] of Object.entries(this.favorites)) {
-          favsObj[k] = Array.from(v);
+        if (entity === 'all' || entity === 'places') {
+          localStorage.setItem('studyspot_deleted_places_v2', JSON.stringify(Array.from(this.deletedPlaceIds)));
+          localStorage.setItem('studyspot_places_v2', JSON.stringify(this.places));
         }
-        localStorage.setItem('studyspot_favs_v2', JSON.stringify(favsObj));
-
-        if (this.currentUser) {
-          localStorage.setItem('studyspot_current_user_v2', JSON.stringify(this.currentUser));
-        } else {
-          localStorage.removeItem('studyspot_current_user_v2');
+        if (entity === 'all' || entity === 'categories') {
+          localStorage.setItem('studyspot_categories_v2', JSON.stringify(this.categories));
+        }
+        if (entity === 'all' || entity === 'checkins') {
+          localStorage.setItem('studyspot_checkins_v2', JSON.stringify(this.checkins));
+        }
+        if (entity === 'all' || entity === 'reviews') {
+          localStorage.setItem('studyspot_reviews_v2', JSON.stringify(this.reviews));
+        }
+        if (entity === 'all' || entity === 'notifications') {
+          localStorage.setItem('studyspot_notifs_v2', JSON.stringify(this.notifications));
+        }
+        if (entity === 'all' || entity === 'reports') {
+          localStorage.setItem('studyspot_reports_v2', JSON.stringify(this.reviewReports));
+        }
+        if (entity === 'all' || entity === 'users') {
+          localStorage.setItem('studyspot_users_v2', JSON.stringify(this.users));
+        }
+        if (entity === 'all' || entity === 'helpful') {
+          localStorage.setItem('studyspot_helpful_v2', JSON.stringify(Array.from(this.helpfulVotes)));
+        }
+        if (entity === 'all' || entity === 'favorites') {
+          const favsObj: { [k: string]: string[] } = {};
+          for (const [k, v] of Object.entries(this.favorites)) {
+            favsObj[k] = Array.from(v);
+          }
+          localStorage.setItem('studyspot_favs_v2', JSON.stringify(favsObj));
+        }
+        if (entity === 'all' || entity === 'currentUser') {
+          if (this.currentUser) {
+            localStorage.setItem('studyspot_current_user_v2', JSON.stringify(this.currentUser));
+          } else {
+            localStorage.removeItem('studyspot_current_user_v2');
+          }
         }
       } catch (e) {
         console.warn('LocalStorage save error:', e);
@@ -196,13 +214,6 @@ class StudySpotStore {
     const existing = this.users.find((u) => u.email.toLowerCase() === cleanEmail);
     if (existing && existing.is_locked) {
       return { success: false, message: 'Tài khoản của bạn đã bị khóa bởi Ban Quản Trị.' };
-    }
-
-    // Default system admin: admin123@ftu.edu.vn / 123456
-    if (cleanEmail === 'admin123@ftu.edu.vn' && pass === '123456') {
-      this.currentUser = INITIAL_USERS[0];
-      this.persist();
-      return { success: true, user: this.currentUser };
     }
 
     if (existing) {
@@ -302,20 +313,7 @@ class StudySpotStore {
 
       // --- Authoritative Places Sync (Single Source of Truth) ---
       let rawPlaces: any[] | null = null;
-      try {
-        const apiRes = await fetch('/api/places?all=1', { cache: 'no-store' });
-        if (apiRes.ok) {
-          const apiData = await apiRes.json();
-          if (Array.isArray(apiData.places)) {
-            rawPlaces = apiData.places;
-          }
-        }
-      } catch (apiErr) {
-        console.warn('Authoritative /api/places?all=1 fetch notice:', apiErr);
-      }
-
-      // Fallback to client Supabase query if /api/places?all=1 was not reachable
-      if (!rawPlaces && placesRes.data) {
+      if (placesRes.data && placesRes.data.length > 0) {
         const amList = amenitiesRes.data || this.amenities;
         const amMap = new Map<number, Amenity>();
         for (const am of amList) {
@@ -335,6 +333,19 @@ class StudySpotStore {
           ...dp,
           amenities: paMap[dp.id] || dp.amenities || [],
         }));
+      } else {
+        // Fallback to /api/places?all=1 only if direct query was empty/failed
+        try {
+          const apiRes = await fetch('/api/places?all=1', { cache: 'no-store' });
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (Array.isArray(apiData.places)) {
+              rawPlaces = apiData.places;
+            }
+          }
+        } catch (apiErr) {
+          console.warn('Authoritative /api/places?all=1 fetch notice:', apiErr);
+        }
       }
 
       if (rawPlaces !== null) {
@@ -344,11 +355,15 @@ class StudySpotStore {
           .filter((dp: any) => !this.deletedPlaceIds.has(dp.id))
           .map((dp: any) => {
             const parsedHours = typeof dp.opening_hours === 'string' ? JSON.parse(dp.opening_hours) : (dp.opening_hours || INITIAL_PLACES[0].opening_hours);
+            const computedPriceRanges = getPriceRangesFromPlace({
+              ...dp,
+              opening_hours: parsedHours,
+            });
             return {
               ...dp,
               opening_hours: parsedHours,
-              price_ranges: dp.price_ranges || parsedHours?.price_ranges || [],
-              price_level: dp.price_level || 2,
+              price_ranges: computedPriceRanges,
+              price_level: dp.price_level || (computedPriceRanges.length > 0 ? calculatePriceLevel(computedPriceRanges) : 2),
               images: dp.images || [],
               view_count: dp.view_count || 0,
               amenities: Array.isArray(dp.amenities) ? dp.amenities : [],
@@ -364,46 +379,46 @@ class StudySpotStore {
       }
 
       // Authoritative Reviews Sync (Single Source of Truth)
-      let supaReviewsList: Review[] | null = null;
-      try {
-        const revApiRes = await fetch('/api/reviews', { cache: 'no-store' });
-        if (revApiRes.ok) {
-          const revApiJson = await revApiRes.json();
-          if (Array.isArray(revApiJson.reviews)) {
-            supaReviewsList = revApiJson.reviews;
-          }
-        }
-      } catch (rErr) {}
-
-      if (supaReviewsList !== null && supaReviewsList.length > 0) {
-        this.reviews = supaReviewsList;
-      } else if (reviewsRes.data && reviewsRes.data.length > 0) {
+      if (reviewsRes.data && reviewsRes.data.length > 0) {
         this.reviews = reviewsRes.data;
       } else {
-        // Resilient fallback if relationship embedding encounters schema notice
+        // Fallback to /api/reviews only if direct query was empty/failed
         try {
-          const { data: fallbackReviews } = await supabase
-            .from('reviews')
-            .select('*')
-            .order('created_at', { ascending: false });
-          if (fallbackReviews && fallbackReviews.length > 0) {
-            const userIds = Array.from(new Set(fallbackReviews.map((r: any) => r.user_id).filter(Boolean)));
-            let userMap: Record<string, any> = {};
-            if (userIds.length > 0) {
-              const { data: usersData } = await supabase
-                .from('users')
-                .select('id, full_name, avatar_url')
-                .in('id', userIds);
-              if (usersData) {
-                userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
-              }
+          const revApiRes = await fetch('/api/reviews', { cache: 'no-store' });
+          if (revApiRes.ok) {
+            const revApiJson = await revApiRes.json();
+            if (Array.isArray(revApiJson.reviews) && revApiJson.reviews.length > 0) {
+              this.reviews = revApiJson.reviews;
             }
-            this.reviews = fallbackReviews.map((r: any) => ({
-              ...r,
-              user: userMap[r.user_id] || null,
-            }));
           }
-        } catch (e) {}
+        } catch (rErr) {}
+
+        if (!this.reviews || this.reviews.length === 0) {
+          // Resilient fallback if relationship embedding encounters schema notice
+          try {
+            const { data: fallbackReviews } = await supabase
+              .from('reviews')
+              .select('*')
+              .order('created_at', { ascending: false });
+            if (fallbackReviews && fallbackReviews.length > 0) {
+              const userIds = Array.from(new Set(fallbackReviews.map((r: any) => r.user_id).filter(Boolean)));
+              let userMap: Record<string, any> = {};
+              if (userIds.length > 0) {
+                const { data: usersData } = await supabase
+                  .from('users')
+                  .select('id, full_name, avatar_url')
+                  .in('id', userIds);
+                if (usersData) {
+                  userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+                }
+              }
+              this.reviews = fallbackReviews.map((r: any) => ({
+                ...r,
+                user: userMap[r.user_id] || null,
+              }));
+            }
+          } catch (e) {}
+        }
       }
 
       if (checkinsRes.data) {
@@ -515,8 +530,13 @@ class StudySpotStore {
       const cat = this.categories.find((c) => c.id === place.category_id);
       const creator = place.created_by ? this.users.find((u) => u.id === place.created_by) : null;
 
+      const priceRanges = getPriceRangesFromPlace(place);
+      const priceLevel = place.price_level || (priceRanges.length > 0 ? calculatePriceLevel(priceRanges) : 2);
+
       return {
         ...place,
+        price_ranges: priceRanges,
+        price_level: priceLevel,
         category: cat,
         creator: creator || null,
         distance_meters: distance,
@@ -683,6 +703,17 @@ class StudySpotStore {
     const p = this.places.find((x) => x.id === placeId);
     if (!p) return null;
     Object.assign(p, data);
+
+    if (data.price_ranges) {
+      p.price_ranges = data.price_ranges;
+      if (p.opening_hours && typeof p.opening_hours === 'object') {
+        p.opening_hours.price_ranges = data.price_ranges;
+      }
+    }
+    const computedRanges = getPriceRangesFromPlace(p);
+    p.price_ranges = computedRanges;
+    p.price_level = data.price_level !== undefined ? data.price_level : (computedRanges.length > 0 ? calculatePriceLevel(computedRanges) : (p.price_level || 2));
+
     this.persist();
     this.notify();
 
@@ -698,7 +729,12 @@ class StudySpotStore {
       if (data.images !== undefined) updatePayload.images = data.images;
       if (data.status !== undefined) updatePayload.status = data.status;
       if (data.reject_reason !== undefined) updatePayload.reject_reason = data.reject_reason;
-      if (data.opening_hours !== undefined) updatePayload.opening_hours = data.opening_hours;
+      if (data.opening_hours !== undefined) {
+        updatePayload.opening_hours = data.opening_hours;
+        if (p.price_ranges && typeof updatePayload.opening_hours === 'object' && updatePayload.opening_hours !== null) {
+          updatePayload.opening_hours.price_ranges = p.price_ranges;
+        }
+      }
 
       supabase.from('places').update(updatePayload).eq('id', placeId).then(({ error }) => {
         if (error) console.warn('Supabase updatePlace notice:', error.message);
@@ -886,13 +922,13 @@ class StudySpotStore {
 
   syncPlaceCheckins(placeId: string, newCheckins: Checkin[]) {
     this.checkins = this.checkins.filter((c) => c.place_id !== placeId).concat(newCheckins);
-    this.persist();
+    this.persist('checkins');
     this.notify();
   }
 
   syncPlaceReviews(placeId: string, newReviews: Review[]) {
     this.reviews = this.reviews.filter((r) => r.place_id !== placeId).concat(newReviews);
-    this.persist();
+    this.persist('reviews');
     this.notify();
   }
 
@@ -1178,12 +1214,16 @@ class StudySpotStore {
 
   syncNotifications(notifs: Notification[]): void {
     if (!Array.isArray(notifs)) return;
+    let hasNew = false;
     for (const n of notifs) {
       if (!this.notifications.some((x) => x.id === n.id)) {
         this.notifications.unshift(n);
+        hasNew = true;
       }
     }
-    this.persist();
+    if (hasNew) {
+      this.persist('notifications');
+    }
   }
 
   markNotificationRead(notificationId: string): void {
@@ -1462,11 +1502,17 @@ class StudySpotStore {
     if (this.deletedPlaceIds.has(place.id)) {
       this.deletedPlaceIds.delete(place.id);
     }
-    const idx = this.places.findIndex((x) => x.id === place.id);
+    const ranges = getPriceRangesFromPlace(place);
+    const enrichedPlace: Place = {
+      ...place,
+      price_ranges: ranges,
+      price_level: place.price_level || (ranges.length > 0 ? calculatePriceLevel(ranges) : 2),
+    };
+    const idx = this.places.findIndex((x) => x.id === enrichedPlace.id);
     if (idx !== -1) {
-      this.places[idx] = place;
+      this.places[idx] = enrichedPlace;
     } else {
-      this.places.unshift(place);
+      this.places.unshift(enrichedPlace);
     }
     this.persist();
     this.notify();
@@ -1509,8 +1555,23 @@ class StudySpotStore {
 
   syncUsersFromSupabase(dbUsers: UserProfile[]): void {
     if (!dbUsers || dbUsers.length === 0) return;
+    const hasChanged =
+      this.users.length !== dbUsers.length ||
+      dbUsers.some((u, i) => {
+        const cur = this.users[i];
+        return (
+          !cur ||
+          cur.id !== u.id ||
+          cur.role !== u.role ||
+          cur.is_locked !== u.is_locked ||
+          cur.email !== u.email ||
+          cur.full_name !== u.full_name ||
+          cur.avatar_url !== u.avatar_url
+        );
+      });
+    if (!hasChanged) return;
     this.users = dbUsers;
-    this.persist();
+    this.persist('users');
     this.notify();
   }
 

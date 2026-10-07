@@ -71,6 +71,8 @@ export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: Pla
           <img
             src={place.images[0] || 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=400&q=80'}
             alt={place.name}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
 

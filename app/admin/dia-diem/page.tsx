@@ -636,6 +636,8 @@ export default function AdminPlacesPage() {
                       <img
                         src={place.images[0] || 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=100&q=80'}
                         alt=""
+                        loading="lazy"
+                        decoding="async"
                         className="w-9 h-9 rounded-lg object-cover ring-1 ring-border"
                       />
                       <div className="truncate max-w-[200px]">
