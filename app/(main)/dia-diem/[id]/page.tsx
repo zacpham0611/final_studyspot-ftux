@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -410,14 +410,12 @@ export default function PlaceDetailPage() {
   const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
   const openDaysSummary = formatOpenDaysText(place.opening_hours);
 
-  const distanceMeters = useMemo(() => {
-    if (!place) return null;
-    const pLat = typeof place.lat === 'number' ? place.lat : parseFloat(String(place.lat));
-    const pLng = typeof place.lng === 'number' ? place.lng : parseFloat(String(place.lng));
-    if (isNaN(pLat) || isNaN(pLng)) return null;
-
-    return calculateDistance(pLat, pLng, FTU_COORDINATES.lat, FTU_COORDINATES.lng);
-  }, [place?.lat, place?.lng]);
+  const pLat = typeof place.lat === 'number' ? place.lat : parseFloat(String(place.lat));
+  const pLng = typeof place.lng === 'number' ? place.lng : parseFloat(String(place.lng));
+  const distanceMeters =
+    !isNaN(pLat) && !isNaN(pLng)
+      ? calculateDistance(pLat, pLng, FTU_COORDINATES.lat, FTU_COORDINATES.lng)
+      : null;
 
   return (
     <motion.div
