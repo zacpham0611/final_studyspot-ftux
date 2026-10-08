@@ -1592,22 +1592,34 @@ class StudySpotStore {
   }
 
   getAllReviewsAdmin(): Review[] {
-    return this.reviews.map((r) => ({
-      ...r,
-      user: this.users.find((u) => u.id === r.user_id) || r.user,
-    }));
+    return this.reviews.map((r) => {
+      const matchedPlace = this.places.find((p) => p.id === r.place_id);
+      return {
+        ...r,
+        user: this.users.find((u) => u.id === r.user_id) || r.user,
+        place: matchedPlace ? { id: matchedPlace.id, name: matchedPlace.name } : (r.place || null),
+      };
+    });
+  }
+
+  setReviewHidden(reviewId: string, isHidden: boolean): boolean {
+    const r = this.reviews.find((x) => x.id === reviewId);
+    if (r) {
+      r.is_hidden = isHidden;
+      this.persist();
+      this.notify();
+      if (typeof window !== 'undefined' && isUuid(reviewId)) {
+        supabase.from('reviews').update({ is_hidden: isHidden }).eq('id', reviewId).then();
+      }
+      return true;
+    }
+    return false;
   }
 
   toggleHideReview(reviewId: string): boolean {
     const r = this.reviews.find((x) => x.id === reviewId);
     if (r) {
-      r.is_hidden = !r.is_hidden;
-      this.persist();
-      this.notify();
-      try {
-        supabase.from('reviews').update({ is_hidden: r.is_hidden }).eq('id', reviewId).then();
-      } catch (e) {}
-      return true;
+      return this.setReviewHidden(reviewId, !r.is_hidden);
     }
     return false;
   }

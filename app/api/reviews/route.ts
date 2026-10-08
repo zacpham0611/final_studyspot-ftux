@@ -1,78 +1,138 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { store, isUuid } from '@/lib/data/store';
 import { createClient } from '@supabase/supabase-js';
+import { createClient as createServerSupabase } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
+
+async function getSupabaseAdminClient(request?: NextRequest) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (serviceRoleKey) {
+    return createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  }
+
+  const authHeader = request?.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false },
+    });
+  }
+
+  if (request) {
+    try {
+      const serverClient = createServerSupabase();
+      const { data: { session } } = await serverClient.auth.getSession();
+      if (session?.access_token) {
+        return serverClient;
+      }
+    } catch (e) {}
+  }
+
+  return createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const placeId = searchParams.get('placeId') || searchParams.get('place_id');
+  const includeHidden =
+    searchParams.get('includeHidden') === 'true' ||
+    searchParams.get('admin') === '1' ||
+    searchParams.get('all') === '1';
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder')) {
+  if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
     try {
-      const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-      let data: any = null;
-
+      const supabaseAdmin = await getSupabaseAdminClient(request);
       let query = supabaseAdmin
         .from('reviews')
-        .select('*, user:users!reviews_user_id_fkey(full_name, avatar_url)')
-        .eq('is_hidden', false)
+        .select('*')
         .order('created_at', { ascending: false });
+
+      if (!includeHidden) {
+        query = query.eq('is_hidden', false);
+      }
 
       if (placeId && placeId !== 'all') {
         query = query.eq('place_id', placeId);
       }
 
-      const embedRes = await query;
+      const { data: revData, error: revError } = await query;
 
-      if (!embedRes.error && embedRes.data) {
-        data = embedRes.data;
-      } else {
-        // Fallback: fetch plain reviews and join users to prevent ambiguous relationship errors
-        let plainQuery = supabaseAdmin
-          .from('reviews')
-          .select('*')
-          .eq('is_hidden', false)
-          .order('created_at', { ascending: false });
+      if (!revError && revData) {
+        const userIds = Array.from(new Set(revData.map((r: any) => r.user_id).filter(Boolean)));
+        const placeIds = Array.from(new Set(revData.map((r: any) => r.place_id).filter(Boolean)));
 
-        if (placeId && placeId !== 'all') {
-          plainQuery = plainQuery.eq('place_id', placeId);
-        }
+        let userMap: Record<string, any> = {};
+        let placeMap: Record<string, any> = {};
 
-        const plainRes = await plainQuery;
-
-        if (!plainRes.error && plainRes.data) {
-          const userIds = Array.from(new Set(plainRes.data.map((r: any) => r.user_id).filter(Boolean)));
-          let userMap: Record<string, any> = {};
-          if (userIds.length > 0) {
-            const { data: usersData } = await supabaseAdmin
+        const batchTasks = [];
+        if (userIds.length > 0) {
+          batchTasks.push(
+            supabaseAdmin
               .from('users')
               .select('id, full_name, avatar_url')
-              .in('id', userIds);
-            if (usersData) {
-              userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
-            }
-          }
-          data = plainRes.data.map((r: any) => ({
-            ...r,
-            user: userMap[r.user_id] || null,
-          }));
+              .in('id', userIds)
+              .then(({ data: usersData }) => {
+                if (usersData) {
+                  userMap = Object.fromEntries(usersData.map((u: any) => [u.id, u]));
+                }
+              })
+          );
         }
-      }
 
-      if (data) {
-        return NextResponse.json({ reviews: data, count: data.length });
+        if (placeIds.length > 0) {
+          batchTasks.push(
+            supabaseAdmin
+              .from('places')
+              .select('id, name')
+              .in('id', placeIds)
+              .then(({ data: placesData }) => {
+                if (placesData) {
+                  placeMap = Object.fromEntries(placesData.map((p: any) => [p.id, p]));
+                }
+              })
+          );
+        }
+
+        await Promise.all(batchTasks);
+
+        const enriched = revData.map((r: any) => ({
+          ...r,
+          user: userMap[r.user_id] || r.user || null,
+          place: placeMap[r.place_id] ? { id: placeMap[r.place_id].id, name: placeMap[r.place_id].name } : null,
+        }));
+
+        return NextResponse.json({ reviews: enriched, count: enriched.length });
       }
     } catch (e: any) {
       console.warn('GET /api/reviews Supabase notice:', e.message);
     }
   }
 
-  const reviews = (placeId && placeId !== 'all') ? store.getReviewsForPlace(placeId) : store.getAllReviewsAdmin();
-  return NextResponse.json({ reviews, count: reviews.length });
+  // Fallback to store
+  let reviews = includeHidden
+    ? store.getAllReviewsAdmin()
+    : placeId && placeId !== 'all'
+    ? store.getReviewsForPlace(placeId)
+    : store.getAllReviewsAdmin().filter((r) => !r.is_hidden);
+
+  if (placeId && placeId !== 'all') {
+    reviews = reviews.filter((r) => r.place_id === placeId);
+  }
+
+  const allPlaces = store.getAllPlacesAdmin();
+  const placeLookup = Object.fromEntries(allPlaces.map((p) => [p.id, { id: p.id, name: p.name }]));
+  const enrichedFallback = reviews.map((r) => ({
+    ...r,
+    place: r.place || placeLookup[r.place_id] || null,
+  }));
+
+  return NextResponse.json({ reviews: enrichedFallback, count: enrichedFallback.length });
 }
 
 export async function POST(request: NextRequest) {
@@ -191,11 +251,10 @@ export async function PATCH(request: NextRequest) {
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder') && isUuid(reviewId)) {
+    if (supabaseUrl && !supabaseUrl.includes('placeholder') && isUuid(reviewId)) {
       try {
-        const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+        const supabaseAdmin = await getSupabaseAdminClient(request);
         const { error } = await supabaseAdmin
           .from('reviews')
           .update({ is_hidden })
@@ -211,7 +270,11 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Sync to store
-    store.toggleHideReview(reviewId);
+    if (typeof is_hidden === 'boolean') {
+      store.setReviewHidden(reviewId, is_hidden);
+    } else {
+      store.toggleHideReview(reviewId);
+    }
 
     return NextResponse.json({ success: true, reviewId, is_hidden });
   } catch (e: any) {
@@ -229,11 +292,10 @@ export async function DELETE(request: NextRequest) {
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (supabaseUrl && serviceKey && !supabaseUrl.includes('placeholder') && isUuid(reviewId)) {
+    if (supabaseUrl && !supabaseUrl.includes('placeholder') && isUuid(reviewId)) {
       try {
-        const supabaseAdmin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+        const supabaseAdmin = await getSupabaseAdminClient(request);
         await supabaseAdmin.from('review_reports').delete().eq('review_id', reviewId);
         await supabaseAdmin.from('review_helpful').delete().eq('review_id', reviewId);
         const { error } = await supabaseAdmin.from('reviews').delete().eq('id', reviewId);

@@ -104,6 +104,10 @@ export interface Review {
     full_name: string;
     avatar_url?: string | null;
   };
+  place?: {
+    id: string;
+    name: string;
+  } | null;
   helpful_count?: number;
   is_helpful_by_me?: boolean;
 }
