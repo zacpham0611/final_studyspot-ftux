@@ -269,12 +269,8 @@ class StudySpotStore {
     this.persist();
     if (typeof window !== 'undefined') {
       localStorage.removeItem('studyspot_current_user_v2');
-      document.cookie = 'studyspot_role=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-      document.cookie = 'studyspot_user_email=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-      try {
-        supabase.auth.signOut().then();
-      } catch (e) {}
     }
+    this.notify();
   }
 
   async loadFromSupabase() {
@@ -651,6 +647,9 @@ class StudySpotStore {
     if (p) {
       p.view_count += 1;
       this.persist();
+      if (typeof window !== 'undefined' && isUuid(id)) {
+        supabase.from('places').update({ view_count: p.view_count }).eq('id', id).then();
+      }
     }
   }
 

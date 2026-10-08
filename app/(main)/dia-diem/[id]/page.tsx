@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -77,7 +77,7 @@ export default function PlaceDetailPage() {
   const [editContent, setEditContent] = useState('');
   const [editRating, setEditRating] = useState(5);
 
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, isLoading } = useAuth();
 
   const refreshData = async () => {
     let p = store.getPlaceById(placeId);
@@ -97,6 +97,9 @@ export default function PlaceDetailPage() {
           const placeJson = await placeRes.json();
           const freshPlace = placeJson.place || (Array.isArray(placeJson.places) ? placeJson.places[0] : null);
           if (freshPlace) {
+            if (p && (p.view_count || 0) > (freshPlace.view_count || 0)) {
+              freshPlace.view_count = p.view_count;
+            }
             p = freshPlace;
             setPlace(freshPlace);
             store.savePlace(freshPlace);
@@ -237,8 +240,16 @@ export default function PlaceDetailPage() {
     }
   };
 
+  const lastIncrementedPlaceIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    store.incrementView(placeId);
+    if (placeId && lastIncrementedPlaceIdRef.current !== placeId) {
+      lastIncrementedPlaceIdRef.current = placeId;
+      store.incrementView(placeId);
+    }
+  }, [placeId]);
+
+  useEffect(() => {
     refreshData();
   }, [placeId, currentUser]);
 
@@ -260,6 +271,10 @@ export default function PlaceDetailPage() {
 
   // Favorite toggle
   const handleToggleFavorite = () => {
+    if (isLoading) {
+      showToast('Đang kiểm tra trạng thái đăng nhập...', 'info');
+      return;
+    }
     if (!currentUser) {
       showToast('Vui lòng đăng nhập để lưu địa điểm yêu thích!', 'info');
       router.push(`/dang-nhap?redirect=/dia-diem/${placeId}`);
@@ -274,6 +289,10 @@ export default function PlaceDetailPage() {
   };
 
   const handleOpenCheckin = () => {
+    if (isLoading) {
+      showToast('Đang kiểm tra trạng thái đăng nhập...', 'info');
+      return;
+    }
     if (!currentUser) {
       showToast('Vui lòng đăng nhập để báo độ đông (check-in)!', 'info');
       router.push(`/dang-nhap?redirect=/dia-diem/${placeId}`);
@@ -291,6 +310,10 @@ export default function PlaceDetailPage() {
   };
 
   const handleOpenReview = () => {
+    if (isLoading) {
+      showToast('Đang kiểm tra trạng thái đăng nhập...', 'info');
+      return;
+    }
     if (!currentUser) {
       showToast('Vui lòng đăng nhập để viết đánh giá!', 'info');
       router.push(`/dang-nhap?redirect=/dia-diem/${placeId}`);
