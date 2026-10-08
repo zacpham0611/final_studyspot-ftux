@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -15,7 +15,7 @@ import { SimilarPlaces } from '@/components/place/SimilarPlaces';
 import { useToast } from '@/components/common/Toast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase/client';
-import { formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
+import { calculateDistance, formatDistance, FTU_COORDINATES } from '@/lib/utils/distance';
 import { formatOpenDaysText, getOpenDaysFromHours, formatDayIntervals, getOpeningStatus } from '@/lib/utils/hours';
 import { getPriceRangesFromPlace } from '@/lib/utils/price';
 import { calculateCrowdStatus } from '@/lib/utils/crowd';
@@ -410,6 +410,15 @@ export default function PlaceDetailPage() {
   const activeOpenDays = getOpenDaysFromHours(place.opening_hours);
   const openDaysSummary = formatOpenDaysText(place.opening_hours);
 
+  const distanceMeters = useMemo(() => {
+    if (!place) return null;
+    const pLat = typeof place.lat === 'number' ? place.lat : parseFloat(String(place.lat));
+    const pLng = typeof place.lng === 'number' ? place.lng : parseFloat(String(place.lng));
+    if (isNaN(pLat) || isNaN(pLng)) return null;
+
+    return calculateDistance(pLat, pLng, FTU_COORDINATES.lat, FTU_COORDINATES.lng);
+  }, [place?.lat, place?.lng]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -484,16 +493,20 @@ export default function PlaceDetailPage() {
             {place.name}
           </h1>
 
-          {/* Location & FTU Distance */}
+          {/* Location & Distance */}
           <div className="flex flex-wrap items-center gap-y-1 gap-x-3 text-sm text-text-secondary">
             <span className="flex items-center gap-1 text-gray-700 font-medium">
               <MapPin className="w-4 h-4 text-burgundy flex-shrink-0" />
               {place.address}
             </span>
-            <span className="text-gray-300">•</span>
-            <span className="font-semibold text-burgundy bg-burgundy-light px-2 py-0.5 rounded text-xs">
-              Cách cổng FTU: {place.distance_meters ? formatDistance(place.distance_meters) : '150m'}
-            </span>
+            {distanceMeters !== null && (
+              <>
+                <span className="text-gray-300">•</span>
+                <span className="font-semibold text-burgundy bg-burgundy-light px-2 py-0.5 rounded text-xs">
+                  Cách cổng FTU: {formatDistance(distanceMeters)}
+                </span>
+              </>
+            )}
           </div>
 
           {/* Rating Summary */}
