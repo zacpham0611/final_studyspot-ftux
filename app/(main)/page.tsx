@@ -50,8 +50,17 @@ function HomePageContent() {
     sortBy: 'distance',
   });
 
+  const [currentTime, setCurrentTime] = useState<Date>(() => new Date());
   const [activeChip, setActiveChip] = useState<string>('all');
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Shared clock tick every 30s to update opening countdowns in real time without polling APIs
+  useEffect(() => {
+    const clockTimer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 30000);
+    return () => clearInterval(clockTimer);
+  }, []);
 
   // Check URL focus parameters (e.g. from proposal navigation)
   const paramPlaceId = searchParams.get('placeId') || searchParams.get('place') || searchParams.get('id');
@@ -357,6 +366,7 @@ function HomePageContent() {
                   place={place}
                   isSelected={place.id === selectedPlaceId}
                   onSelect={() => handleSelectFromCard(place)}
+                  currentTime={currentTime}
                 />
               </div>
             ))
@@ -424,6 +434,7 @@ function HomePageContent() {
                 key={place.id}
                 place={place}
                 isSelected={place.id === selectedPlaceId}
+                currentTime={currentTime}
                 onSelect={() => {
                   handleSelectFromCard(place);
                   setIsMobileSheetExpanded(false);

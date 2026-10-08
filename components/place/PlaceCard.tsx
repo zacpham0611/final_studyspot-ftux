@@ -5,19 +5,20 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Place } from '@/lib/types/database';
 import { formatDistance } from '@/lib/utils/distance';
-import { Star, MapPin, Heart, ArrowRight } from 'lucide-react';
+import { Star, MapPin, Heart, ArrowRight, Clock } from 'lucide-react';
 import { store } from '@/lib/data/store';
 import { useToast } from '@/components/common/Toast';
-import { getOpeningStatus } from '@/lib/utils/hours';
+import { getOpeningStatus, getPlaceCountdownText } from '@/lib/utils/hours';
 
 interface PlaceCardProps {
   place: Place;
   isSelected?: boolean;
   onSelect?: () => void;
   onFavoriteToggle?: (isFav: boolean) => void;
+  currentTime?: Date;
 }
 
-export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: PlaceCardProps) {
+export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle, currentTime }: PlaceCardProps) {
   const router = useRouter();
   const { showToast } = useToast();
   const [isFav, setIsFav] = React.useState(false);
@@ -50,7 +51,9 @@ export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: Pla
   };
 
   const priceSymbol = '$'.repeat(place.price_level || 2);
-  const isPlaceOpen = place.is_open ?? (place.opening_hours ? getOpeningStatus(place.opening_hours).isOpen : true);
+  const currentHoursStatus = place.opening_hours ? getOpeningStatus(place.opening_hours, currentTime) : null;
+  const isPlaceOpen = currentHoursStatus ? currentHoursStatus.isOpen : (place.is_open ?? true);
+  const countdownText = getPlaceCountdownText(place.opening_hours, currentTime);
 
   return (
     <div
@@ -124,6 +127,14 @@ export function PlaceCard({ place, isSelected, onSelect, onFavoriteToggle }: Pla
             >
               {place.name}
             </h3>
+
+            {/* Countdown immediately below Place Name */}
+            {countdownText && (
+              <p className="text-[11px] font-semibold text-amber-600 flex items-center gap-1 mt-0.5">
+                <Clock className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                <span>{countdownText}</span>
+              </p>
+            )}
 
             <p className="text-xs text-text-secondary truncate mt-0.5 flex items-center gap-1">
               <MapPin className="w-3 h-3 text-burgundy flex-shrink-0" />
