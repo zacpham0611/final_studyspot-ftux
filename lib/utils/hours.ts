@@ -19,12 +19,14 @@ const DAYS_MAP: (keyof OpeningHours)[] = [
   'saturday',
 ];
 
-/**
- * Parse time string "HH:mm" into minutes since midnight
- */
-function parseTimeToMinutes(timeStr: string): number {
-  const [h, m] = timeStr.split(':').map(Number);
-  return h * 60 + (m || 0);
+function parseTimeToMinutes(timeStr?: string | null): number {
+  if (!timeStr || typeof timeStr !== 'string') return NaN;
+  const parts = timeStr.trim().split(':');
+  if (parts.length < 2) return NaN;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return NaN;
+  return h * 60 + m;
 }
 
 /**
@@ -529,7 +531,9 @@ export function getPlaceCountdownText(
 
   // 1. Check if currently open in yesterday's overnight spillover shift (e.g. 18:00 - 02:00, now 01:30)
   if (isYesterdayOpen && !yesterdaySchedule?.is_closed) {
-    const yIntervals = getDayIntervals(yesterdaySchedule);
+    const yIntervals = getDayIntervals(yesterdaySchedule).filter(
+      (i) => !isNaN(parseTimeToMinutes(i.open)) && !isNaN(parseTimeToMinutes(i.close))
+    );
     const spilloverInterval = yIntervals.find((interval) => {
       const openMins = parseTimeToMinutes(interval.open);
       const closeMins = parseTimeToMinutes(interval.close);
@@ -537,7 +541,27 @@ export function getPlaceCountdownText(
     });
 
     if (spilloverInterval) {
-      const closeMins = parseTimeToMinutes(spilloverInterval.close);
+      let closeMins = parseTimeToMinutes(spilloverInterval.close);
+      // Check if today connects immediately with this spillover without closing
+      if (isTodayOpen && !todaySchedule?.is_closed) {
+        const todayIntervals = getDayIntervals(todaySchedule).filter(
+          (i) => !isNaN(parseTimeToMinutes(i.open)) && !isNaN(parseTimeToMinutes(i.close))
+        );
+        const chained = todayIntervals.find((i) => parseTimeToMinutes(i.open) <= closeMins);
+        if (chained) {
+          const chainedOpen = parseTimeToMinutes(chained.open);
+          const chainedClose = parseTimeToMinutes(chained.close);
+          if (chainedClose < chainedOpen) {
+            // Chains into an overnight shift today
+            const diff = 24 * 60 - currentMinutes + chainedClose;
+            if (diff > 0 && diff <= 60) return `Đóng cửa sau ${diff} phút`;
+            return null;
+          } else if (chainedClose > closeMins) {
+            closeMins = chainedClose;
+          }
+        }
+      }
+
       const diff = closeMins - currentMinutes;
       if (diff > 0 && diff <= 60) {
         return `Đóng cửa sau ${diff} phút`;
@@ -548,7 +572,9 @@ export function getPlaceCountdownText(
 
   // 2. Check if currently open in today's active intervals
   if (isTodayOpen && !todaySchedule?.is_closed) {
-    const todayIntervals = getDayIntervals(todaySchedule);
+    const todayIntervals = getDayIntervals(todaySchedule).filter(
+      (i) => !isNaN(parseTimeToMinutes(i.open)) && !isNaN(parseTimeToMinutes(i.close))
+    );
     const activeInterval = todayIntervals.find((interval) => {
       const openMins = parseTimeToMinutes(interval.open);
       const closeMins = parseTimeToMinutes(interval.close);
@@ -560,12 +586,52 @@ export function getPlaceCountdownText(
     });
 
     if (activeInterval) {
-      const openMins = parseTimeToMinutes(activeInterval.open);
-      const closeMins = parseTimeToMinutes(activeInterval.close);
-      const isOvernight = closeMins < openMins;
+      let effectiveCloseMins = parseTimeToMinutes(activeInterval.close);
+      let isOvernight = effectiveCloseMins < parseTimeToMinutes(activeInterval.open);
+
+      // Chain contiguous / overlapping daytime intervals
+      if (!isOvernight) {
+        let extended = true;
+        while (extended) {
+          extended = false;
+          for (const next of todayIntervals) {
+            const nextOpen = parseTimeToMinutes(next.open);
+            const nextClose = parseTimeToMinutes(next.close);
+            if (nextOpen <= effectiveCloseMins) {
+              if (nextClose < nextOpen) {
+                // Next is overnight
+                isOvernight = true;
+                effectiveCloseMins = nextClose;
+                extended = false;
+                break;
+              } else if (nextClose > effectiveCloseMins) {
+                effectiveCloseMins = nextClose;
+                extended = true;
+              }
+            }
+          }
+        }
+      }
+
+      // Check if it ends at midnight (24:00) and tomorrow opens at 00:00
+      if (!isOvernight && effectiveCloseMins === 24 * 60) {
+        if (isTomorrowOpen && !tomorrowSchedule?.is_closed) {
+          const tomIntervals = getDayIntervals(tomorrowSchedule).filter(
+            (i) => !isNaN(parseTimeToMinutes(i.open)) && !isNaN(parseTimeToMinutes(i.close))
+          );
+          const midnightStart = tomIntervals.find((i) => parseTimeToMinutes(i.open) === 0);
+          if (midnightStart) {
+            const tomClose = parseTimeToMinutes(midnightStart.close);
+            const diff = 24 * 60 - currentMinutes + tomClose;
+            if (diff > 0 && diff <= 60) return `Đóng cửa sau ${diff} phút`;
+            return null;
+          }
+        }
+      }
+
       const diff = isOvernight
-        ? (24 * 60 - currentMinutes + closeMins)
-        : (closeMins - currentMinutes);
+        ? 24 * 60 - currentMinutes + effectiveCloseMins
+        : effectiveCloseMins - currentMinutes;
 
       if (diff > 0 && diff <= 60) {
         return `Đóng cửa sau ${diff} phút`;
@@ -591,10 +657,12 @@ export function getPlaceCountdownText(
 
   // 4. Closed and no more intervals today: check first interval TOMORROW
   if (isTomorrowOpen && !tomorrowSchedule?.is_closed) {
-    const tomorrowIntervals = getDayIntervals(tomorrowSchedule);
+    const tomorrowIntervals = getDayIntervals(tomorrowSchedule).filter(
+      (i) => !isNaN(parseTimeToMinutes(i.open)) && !isNaN(parseTimeToMinutes(i.close))
+    );
     if (tomorrowIntervals.length > 0) {
       const firstTomorrowOpen = Math.min(...tomorrowIntervals.map((i) => parseTimeToMinutes(i.open)));
-      const diff = (24 * 60 - currentMinutes) + firstTomorrowOpen;
+      const diff = 24 * 60 - currentMinutes + firstTomorrowOpen;
       if (diff > 0 && diff <= 60) {
         return `Mở cửa sau ${diff} phút`;
       }
