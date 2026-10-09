@@ -22,7 +22,7 @@ export async function GET() {
       if (!error && data && data.length > 0) {
         return NextResponse.json(
           { categories: data },
-          { headers: { 'Cache-Control': 'public, max-age=300, stale-while-revalidate=3600' } }
+          { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
         );
       } else if (error) {
         console.warn('GET /api/categories Supabase notice:', error.message);
@@ -35,7 +35,7 @@ export async function GET() {
   // Fallback to store
   return NextResponse.json(
     { categories: store.getCategories() },
-    { headers: { 'Cache-Control': 'public, max-age=300, stale-while-revalidate=3600' } }
+    { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' } }
   );
 }
 

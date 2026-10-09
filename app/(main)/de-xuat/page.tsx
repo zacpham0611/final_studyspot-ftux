@@ -78,15 +78,22 @@ function SuggestPlaceContent() {
     };
 
     updateStoreData();
-    fetch('/api/categories', { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && Array.isArray(data.categories) && data.categories.length > 0) {
-          setCategories(data.categories);
-          setCategoryId((prev) => (prev && data.categories.some((c: Category) => Number(c.id) === Number(prev))) ? prev : Number(data.categories[0].id));
-        }
-      })
-      .catch(() => {});
+
+    Promise.all([
+      fetch('/api/categories', { cache: 'no-store' }).then((res) => res.json()).catch(() => null),
+      fetch('/api/amenities', { cache: 'no-store' }).then((res) => res.json()).catch(() => null),
+    ]).then(([catData, amData]) => {
+      if (catData && Array.isArray(catData.categories) && catData.categories.length > 0) {
+        setCategories(catData.categories);
+        store.syncCategories(catData.categories);
+        setCategoryId((prev) => (prev && catData.categories.some((c: Category) => Number(c.id) === Number(prev))) ? prev : Number(catData.categories[0].id));
+      }
+      if (amData && Array.isArray(amData.amenities) && amData.amenities.length > 0) {
+        setAmenities(amData.amenities);
+        store.syncAmenities(amData.amenities);
+      }
+    });
+
     store.loadFromSupabase().then(updateStoreData);
     const unsub = store.subscribe(updateStoreData);
     return () => unsub();

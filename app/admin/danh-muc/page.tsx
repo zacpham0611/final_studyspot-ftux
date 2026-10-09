@@ -46,6 +46,7 @@ export default function AdminCategoriesPage() {
         const catJson = await catRes.json();
         if (Array.isArray(catJson.categories)) {
           setCategories(catJson.categories);
+          store.syncCategories(catJson.categories);
         }
       }
 
@@ -53,6 +54,7 @@ export default function AdminCategoriesPage() {
         const amJson = await amRes.json();
         if (Array.isArray(amJson.amenities)) {
           setAmenities(amJson.amenities);
+          store.syncAmenities(amJson.amenities);
         }
       }
     } catch (e) {
@@ -93,6 +95,11 @@ export default function AdminCategoriesPage() {
 
       setNewCatName('');
       showToast(`Đã thêm loại địa điểm "${data.category.name}" thành công!`, 'success');
+      store.addOrUpdateCategoryInMemory(data.category);
+      setCategories((prev) => {
+        if (prev.some((c) => Number(c.id) === Number(data.category.id))) return prev;
+        return [...prev, data.category];
+      });
       await loadData();
     } catch (err: any) {
       showToast(err.message || 'Lỗi mạng khi thêm danh mục', 'error');
@@ -116,6 +123,8 @@ export default function AdminCategoriesPage() {
       }
 
       showToast(`Đã xóa loại địa điểm "${name}" thành công`, 'info');
+      store.deleteCategory(id);
+      setCategories((prev) => prev.filter((c) => Number(c.id) !== Number(id)));
       await loadData();
     } catch (err: any) {
       showToast(err.message || 'Lỗi kết nối khi xóa danh mục', 'error');
@@ -142,6 +151,11 @@ export default function AdminCategoriesPage() {
 
       setNewAmName('');
       showToast(`Đã thêm tiện ích "${data.amenity.name}" thành công!`, 'success');
+      store.addOrUpdateAmenityInMemory(data.amenity);
+      setAmenities((prev) => {
+        if (prev.some((a) => Number(a.id) === Number(data.amenity.id))) return prev;
+        return [...prev, data.amenity];
+      });
       await loadData();
     } catch (err: any) {
       showToast(err.message || 'Lỗi mạng khi thêm tiện ích', 'error');
@@ -166,6 +180,7 @@ export default function AdminCategoriesPage() {
 
       showToast(`Đã xóa tiện ích "${name}" thành công`, 'info');
       store.deleteAmenity(id);
+      setAmenities((prev) => prev.filter((a) => Number(a.id) !== Number(id)));
       await loadData();
     } catch (err: any) {
       showToast(err.message || 'Lỗi kết nối khi xóa tiện ích', 'error');

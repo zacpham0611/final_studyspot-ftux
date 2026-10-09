@@ -109,6 +109,14 @@ class StudySpotStore {
           } catch (e) {}
         }
 
+        const storedAmenities = localStorage.getItem('studyspot_amenities_v2');
+        if (storedAmenities) {
+          try {
+            const parsed = JSON.parse(storedAmenities);
+            if (Array.isArray(parsed) && parsed.length > 0) this.amenities = parsed;
+          } catch (e) {}
+        }
+
         const storedHelpful = localStorage.getItem('studyspot_helpful_v2');
         if (storedHelpful) this.helpfulVotes = new Set(JSON.parse(storedHelpful));
 
@@ -135,7 +143,7 @@ class StudySpotStore {
     }
   }
 
-  private persist(entity: 'all' | 'places' | 'categories' | 'checkins' | 'reviews' | 'notifications' | 'reports' | 'users' | 'helpful' | 'favorites' | 'currentUser' = 'all') {
+  private persist(entity: 'all' | 'places' | 'categories' | 'amenities' | 'checkins' | 'reviews' | 'notifications' | 'reports' | 'users' | 'helpful' | 'favorites' | 'currentUser' = 'all') {
     if (typeof window !== 'undefined') {
       try {
         if (entity === 'all' || entity === 'places') {
@@ -144,6 +152,9 @@ class StudySpotStore {
         }
         if (entity === 'all' || entity === 'categories') {
           localStorage.setItem('studyspot_categories_v2', JSON.stringify(this.categories));
+        }
+        if (entity === 'all' || entity === 'amenities') {
+          localStorage.setItem('studyspot_amenities_v2', JSON.stringify(this.amenities));
         }
         if (entity === 'all' || entity === 'checkins') {
           localStorage.setItem('studyspot_checkins_v2', JSON.stringify(this.checkins));
@@ -432,57 +443,51 @@ class StudySpotStore {
         }
       }
 
-      let supaNotifs: Notification[] | null = null;
-      try {
-        const notifRes = await fetch('/api/notifications', { cache: 'no-store' });
-        if (notifRes.ok) {
-          const notifJson = await notifRes.json();
-          if (Array.isArray(notifJson.notifications)) {
-            supaNotifs = notifJson.notifications;
+      let supaNotifs: Notification[] | null = notificationsRes.data && notificationsRes.data.length > 0 ? notificationsRes.data : null;
+      if (!supaNotifs) {
+        try {
+          const notifRes = await fetch('/api/notifications', { cache: 'no-store' });
+          if (notifRes.ok) {
+            const notifJson = await notifRes.json();
+            if (Array.isArray(notifJson.notifications)) {
+              supaNotifs = notifJson.notifications;
+            }
           }
-        }
-      } catch (nErr) {}
-
-      if (!supaNotifs && notificationsRes.data) {
-        supaNotifs = notificationsRes.data;
+        } catch (nErr) {}
       }
 
       if (supaNotifs !== null) {
         this.notifications = supaNotifs;
       }
 
-      let supaCategories: Category[] | null = null;
-      try {
-        const catRes = await fetch('/api/categories', { cache: 'no-store' });
-        if (catRes.ok) {
-          const catJson = await catRes.json();
-          if (Array.isArray(catJson.categories) && catJson.categories.length > 0) {
-            supaCategories = catJson.categories;
+      let supaCategories: Category[] | null = categoriesRes.data && categoriesRes.data.length > 0 ? categoriesRes.data : null;
+      if (!supaCategories) {
+        try {
+          const catRes = await fetch('/api/categories', { cache: 'no-store' });
+          if (catRes.ok) {
+            const catJson = await catRes.json();
+            if (Array.isArray(catJson.categories) && catJson.categories.length > 0) {
+              supaCategories = catJson.categories;
+            }
           }
-        }
-      } catch (cErr) {}
-
-      if (!supaCategories && categoriesRes.data && categoriesRes.data.length > 0) {
-        supaCategories = categoriesRes.data;
+        } catch (cErr) {}
       }
 
       if (supaCategories !== null && supaCategories.length > 0) {
         this.categories = supaCategories;
       }
 
-      let supaAmenities: Amenity[] | null = null;
-      try {
-        const amRes = await fetch('/api/amenities', { cache: 'no-store' });
-        if (amRes.ok) {
-          const amJson = await amRes.json();
-          if (Array.isArray(amJson.amenities)) {
-            supaAmenities = amJson.amenities;
+      let supaAmenities: Amenity[] | null = amenitiesRes.data && amenitiesRes.data.length > 0 ? amenitiesRes.data : null;
+      if (!supaAmenities) {
+        try {
+          const amRes = await fetch('/api/amenities', { cache: 'no-store' });
+          if (amRes.ok) {
+            const amJson = await amRes.json();
+            if (Array.isArray(amJson.amenities)) {
+              supaAmenities = amJson.amenities;
+            }
           }
-        }
-      } catch (aErr) {}
-
-      if (!supaAmenities && amenitiesRes.data) {
-        supaAmenities = amenitiesRes.data;
+        } catch (aErr) {}
       }
 
       if (supaAmenities !== null) {
@@ -1653,9 +1658,28 @@ class StudySpotStore {
     this.notify();
   }
 
+  syncCategories(cats: Category[]) {
+    if (Array.isArray(cats) && cats.length > 0) {
+      this.categories = cats;
+      this.persist('categories');
+      this.notify();
+    }
+  }
+
+  addOrUpdateCategoryInMemory(cat: Category) {
+    const idx = this.categories.findIndex((c) => Number(c.id) === Number(cat.id) || c.name.toLowerCase() === cat.name.toLowerCase());
+    if (idx !== -1) {
+      this.categories[idx] = cat;
+    } else {
+      this.categories.push(cat);
+    }
+    this.persist('categories');
+    this.notify();
+  }
+
   deleteCategory(catId: number) {
     this.categories = this.categories.filter((c) => c.id !== catId);
-    this.persist();
+    this.persist('categories');
     this.notify();
     if (typeof window !== 'undefined') {
       supabase.from('categories').delete().eq('id', catId).then();
@@ -1664,6 +1688,25 @@ class StudySpotStore {
 
   getAmenities(): Amenity[] {
     return this.amenities;
+  }
+
+  syncAmenities(amenities: Amenity[]) {
+    if (Array.isArray(amenities)) {
+      this.amenities = amenities;
+      this.persist('amenities');
+      this.notify();
+    }
+  }
+
+  addOrUpdateAmenityInMemory(am: Amenity) {
+    const idx = this.amenities.findIndex((a) => Number(a.id) === Number(am.id) || a.name.toLowerCase() === am.name.toLowerCase());
+    if (idx !== -1) {
+      this.amenities[idx] = am;
+    } else {
+      this.amenities.push(am);
+    }
+    this.persist('amenities');
+    this.notify();
   }
 
   saveAmenity(am: Amenity) {
@@ -1681,20 +1724,20 @@ class StudySpotStore {
         supabase.from('amenities').insert(payload).select().single().then(({ data }) => {
           if (data) {
             this.amenities = this.amenities.map((a) => (a.name === am.name ? data : a));
-            this.persist();
+            this.persist('amenities');
             this.notify();
           }
         });
       }
       this.amenities.push({ ...am, id: tempId || Date.now() });
     }
-    this.persist();
+    this.persist('amenities');
     this.notify();
   }
 
   deleteAmenity(amId: number) {
     this.amenities = this.amenities.filter((a) => Number(a.id) !== Number(amId));
-    this.persist();
+    this.persist('amenities');
     this.notify();
     if (typeof window !== 'undefined') {
       supabase.from('amenities').delete().eq('id', amId).then();
