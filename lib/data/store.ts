@@ -213,6 +213,8 @@ class StudySpotStore {
       const idx = this.users.findIndex((u) => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
       if (idx !== -1) {
         this.users[idx] = { ...this.users[idx], ...user };
+      } else {
+        this.users.push(user);
       }
     }
     this.persist();
@@ -1558,6 +1560,23 @@ class StudySpotStore {
     return false;
   }
 
+  deleteUser(userId: string): boolean {
+    const idx = this.users.findIndex((x) => x.id === userId);
+    if (idx !== -1) {
+      this.users.splice(idx, 1);
+      if (this.currentUser && this.currentUser.id === userId) {
+        this.currentUser = null;
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('studyspot_current_user_v2');
+        }
+      }
+      this.persist('users');
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
   syncUsersFromSupabase(dbUsers: UserProfile[]): void {
     if (!dbUsers || dbUsers.length === 0) return;
     const hasChanged =
@@ -1580,19 +1599,25 @@ class StudySpotStore {
     this.notify();
   }
 
-  updateUserAvatar(userId: string, avatarUrl: string): void {
+  updateUserProfile(userId: string, updates: { full_name?: string; avatar_url?: string }): void {
     const idx = this.users.findIndex((u) => u.id === userId);
     if (idx !== -1) {
-      this.users[idx].avatar_url = avatarUrl;
+      if (updates.full_name !== undefined) this.users[idx].full_name = updates.full_name;
+      if (updates.avatar_url !== undefined) this.users[idx].avatar_url = updates.avatar_url;
     }
     if (this.currentUser && this.currentUser.id === userId) {
-      this.currentUser.avatar_url = avatarUrl;
+      if (updates.full_name !== undefined) this.currentUser.full_name = updates.full_name;
+      if (updates.avatar_url !== undefined) this.currentUser.avatar_url = updates.avatar_url;
     }
     this.persist();
     this.notify();
     if (typeof window !== 'undefined' && isUuid(userId)) {
-      supabase.from('users').update({ avatar_url: avatarUrl }).eq('id', userId).then();
+      supabase.from('users').update(updates).eq('id', userId).then();
     }
+  }
+
+  updateUserAvatar(userId: string, avatarUrl: string): void {
+    this.updateUserProfile(userId, { avatar_url: avatarUrl });
   }
 
   getAllReviewsAdmin(): Review[] {

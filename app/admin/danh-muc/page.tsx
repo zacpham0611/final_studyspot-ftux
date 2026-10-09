@@ -53,14 +53,16 @@ export default function AdminCategoriesPage() {
       if (amRes.ok) {
         const amJson = await amRes.json();
         if (Array.isArray(amJson.amenities)) {
-          setAmenities(amJson.amenities);
-          store.syncAmenities(amJson.amenities);
+          const sorted = [...amJson.amenities].sort((a, b) => Number(a.id) - Number(b.id));
+          setAmenities(sorted);
+          store.syncAmenities(sorted);
         }
       }
     } catch (e) {
       // Fallback to store
       setCategories(store.getCategories());
-      setAmenities(store.getAmenities());
+      const sorted = [...store.getAmenities()].sort((a, b) => Number(a.id) - Number(b.id));
+      setAmenities(sorted);
     } finally {
       setLoading(false);
     }
@@ -70,7 +72,8 @@ export default function AdminCategoriesPage() {
     loadData();
     const unsub = store.subscribe(() => {
       setCategories(store.getCategories());
-      setAmenities(store.getAmenities());
+      const sorted = [...store.getAmenities()].sort((a, b) => Number(a.id) - Number(b.id));
+      setAmenities(sorted);
     });
     return () => unsub();
   }, []);
@@ -154,7 +157,7 @@ export default function AdminCategoriesPage() {
       store.addOrUpdateAmenityInMemory(data.amenity);
       setAmenities((prev) => {
         if (prev.some((a) => Number(a.id) === Number(data.amenity.id))) return prev;
-        return [...prev, data.amenity];
+        return [...prev, data.amenity].sort((a, b) => Number(a.id) - Number(b.id));
       });
       await loadData();
     } catch (err: any) {
@@ -278,7 +281,7 @@ export default function AdminCategoriesPage() {
             {amenities.length === 0 ? (
               <p className="text-xs text-gray-400 italic py-2">Chưa có tiện ích nào.</p>
             ) : (
-              amenities.map((a) => (
+              amenities.map((a, index) => (
                 <div
                   key={a.id}
                   className="flex items-center justify-between p-3 rounded-xl border border-border text-xs hover:border-burgundy/30 transition-colors"
@@ -286,7 +289,7 @@ export default function AdminCategoriesPage() {
                   <div className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-amber-500" />
                     <span className="font-semibold text-gray-800">{a.name}</span>
-                    <span className="text-[10px] text-gray-400 font-mono">#{a.id}</span>
+                    <span className="text-[10px] text-gray-400 font-mono">#{index + 1}</span>
                   </div>
                   <button
                     onClick={() => handleDeleteAmenity(a.id, a.name)}

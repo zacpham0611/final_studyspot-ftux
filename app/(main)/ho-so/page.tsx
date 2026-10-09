@@ -21,7 +21,8 @@ import {
   MapPin, 
   ArrowRight,
   Upload,
-  Loader2
+  Loader2,
+  Edit3
 } from 'lucide-react';
 
 import { useAuth } from '@/components/auth/AuthContext';
@@ -44,9 +45,11 @@ function ProfileContent() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Edit Name State
-  const [isEditingName, setIsEditingName] = useState(false);
+  // Edit Profile States
+  const [isEditing, setIsEditing] = useState(false);
   const [nameInput, setNameInput] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const loadProfile = async () => {
     if (!currentUser) return;
@@ -107,10 +110,81 @@ function ProfileContent() {
 
   useEffect(() => {
     if (currentUser) {
-      setNameInput(currentUser.full_name);
+      if (!isEditing) {
+        setNameInput(currentUser.full_name);
+      }
       loadProfile();
     }
-  }, [currentUser]);
+  }, [currentUser, isEditing]);
+
+  const handleCancelEdit = () => {
+    if (currentUser) {
+      setNameInput(currentUser.full_name);
+    }
+    setNameError('');
+    setIsEditing(false);
+  };
+
+  const handleSaveProfile = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!currentUser) return;
+
+    const trimmedName = nameInput.trim();
+    if (!trimmedName) {
+      setNameError('Họ và tên không được để trống');
+      showToast('Vui lòng nhập họ và tên hợp lệ', 'error');
+      return;
+    }
+
+    if (trimmedName.length > 100) {
+      setNameError('Họ và tên không được vượt quá 100 ký tự');
+      showToast('Họ và tên không được vượt quá 100 ký tự', 'error');
+      return;
+    }
+
+    setNameError('');
+    setIsSaving(true);
+
+    try {
+      // 1. Call server API to validate authorization and update database & Supabase Auth metadata
+      const res = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          full_name: trimmedName,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Lỗi khi cập nhật thông tin hồ sơ');
+      }
+
+      // 2. Direct Supabase client update under user RLS
+      try {
+        await supabase.from('users').update({ full_name: trimmedName }).eq('id', currentUser.id);
+        await supabase.auth.updateUser({ data: { full_name: trimmedName } });
+      } catch (clientErr) {
+        console.warn('Client Supabase profile update notice:', clientErr);
+      }
+
+      // 3. Update local store
+      store.updateUserProfile(currentUser.id, { full_name: trimmedName });
+
+      // 4. Refresh AuthContext so Header and other components update immediately
+      await refreshUser();
+
+      showToast('Cập nhật thông tin hồ sơ thành công!', 'success');
+      setIsEditing(false);
+      router.refresh();
+    } catch (err: any) {
+      console.error('Update profile error:', err);
+      showToast(err.message || 'Không thể lưu thay đổi hồ sơ. Vui lòng thử lại!', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Trigger file selection dialog
   const handleAvatarClick = () => {
@@ -260,47 +334,194 @@ function ProfileContent() {
           </button>
         </div>
 
-        {/* User Details & Action Button */}
-        <div className="flex-1 text-center sm:text-left space-y-1.5">
-          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-            <h1 className="text-2xl font-extrabold text-gray-900">{currentUser.full_name}</h1>
-            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-burgundy-light text-burgundy border border-burgundy-border">
-              {currentUser.role === 'admin' ? 'Ban Quản Trị' : 'Sinh viên FTU'}
-            </span>
+        {/* User Details & Action Button (View Mode vs Edit Form Mode) */}
+        {!isEditing ? (
+          <div className="flex-1 text-center sm:text-left space-y-1.5 w-full">
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+              <h1 className="text-2xl font-extrabold text-gray-900">{currentUser.full_name}</h1>
+              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-burgundy-light text-burgundy border border-burgundy-border">
+                {currentUser.role === 'admin' ? 'Ban Quản Trị' : 'Sinh viên FTU'}
+              </span>
+            </div>
+
+            <p className="text-xs text-gray-500 flex items-center justify-center sm:justify-start gap-1">
+              <Mail className="w-3.5 h-3.5 text-gray-400" />
+              {currentUser.email}
+            </p>
+
+            <p className="text-[11px] text-gray-400 flex items-center justify-center sm:justify-start gap-1 pt-0.5">
+              <Calendar className="w-3.5 h-3.5" />
+              Tham gia: {new Date(currentUser.created_at).toLocaleDateString('vi-VN')}
+            </p>
+
+            {/* Action Buttons: Edit Profile & Choose File from Computer */}
+            <div className="pt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setNameInput(currentUser.full_name);
+                  setNameError('');
+                  setIsEditing(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-burgundy text-white hover:bg-burgundy-hover text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Chỉnh sửa hồ sơ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAvatarClick}
+                disabled={isUploading}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-gray-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-burgundy" />
+                    <span>Đang tải ảnh lên...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-3.5 h-3.5 text-burgundy" />
+                    <span>Chọn ảnh từ máy tính</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
+        ) : (
+          /* Edit Form Mode */
+          <form onSubmit={handleSaveProfile} className="flex-1 text-left w-full space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-burgundy" />
+                <h2 className="text-base font-bold text-gray-900">Chỉnh sửa thông tin cá nhân</h2>
+              </div>
+              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-burgundy-light text-burgundy border border-burgundy-border">
+                {currentUser.role === 'admin' ? 'Ban Quản Trị' : 'Sinh viên FTU'}
+              </span>
+            </div>
 
-          <p className="text-xs text-gray-500 flex items-center justify-center sm:justify-start gap-1">
-            <Mail className="w-3.5 h-3.5 text-gray-400" />
-            {currentUser.email}
-          </p>
+            <div className="space-y-3">
+              {/* Full Name Field */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Họ và tên <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={nameInput}
+                    onChange={(e) => {
+                      setNameInput(e.target.value);
+                      if (nameError) setNameError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') handleCancelEdit();
+                    }}
+                    placeholder="Nhập họ và tên..."
+                    autoFocus
+                    disabled={isSaving}
+                    className={`w-full pl-9 pr-3 py-2 text-sm rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-burgundy/20 transition-all ${
+                      nameError
+                        ? 'border-red-400 focus:border-red-500'
+                        : 'border-border focus:border-burgundy'
+                    }`}
+                  />
+                </div>
+                {nameError && (
+                  <p className="text-[11px] text-red-600 mt-1 flex items-center gap-1 font-medium">
+                    {nameError}
+                  </p>
+                )}
+              </div>
 
-          <p className="text-[11px] text-gray-400 flex items-center justify-center sm:justify-start gap-1 pt-0.5">
-            <Calendar className="w-3.5 h-3.5" />
-            Tham gia: {new Date(currentUser.created_at).toLocaleDateString('vi-VN')}
-          </p>
+              {/* Email Field (Read-only) */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-gray-700">
+                    Email đăng nhập
+                  </label>
+                  <span className="text-[10px] text-gray-400 italic">Không thể thay đổi</span>
+                </div>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="email"
+                    value={currentUser.email}
+                    disabled
+                    readOnly
+                    className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-border bg-slate-50 text-gray-500 cursor-not-allowed select-none"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Email xác thực gắn liền với tài khoản và được bảo mật theo quy định FTU.
+                </p>
+              </div>
 
-          {/* Choose File from Computer Button */}
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={handleAvatarClick}
-              disabled={isUploading}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-gray-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-burgundy" />
-                  <span>Đang tải ảnh lên...</span>
-                </>
-              ) : (
-                <>
-                  <Upload className="w-3.5 h-3.5 text-burgundy" />
-                  <span>Chọn ảnh từ máy tính</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
+              {/* Avatar upload tip in edit mode */}
+              <div className="pt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500">
+                <Upload className="w-3.5 h-3.5 text-burgundy flex-shrink-0" />
+                <span>Bạn có thể đổi ảnh đại diện bằng nút bên dưới hoặc bấm trực tiếp vào khung ảnh.</span>
+              </div>
+            </div>
+
+            {/* Action Buttons: Save & Cancel */}
+            <div className="pt-2 flex flex-wrap items-center gap-2.5">
+              <button
+                type="submit"
+                disabled={isSaving || isUploading}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-burgundy text-white hover:bg-burgundy-hover text-xs font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Đang lưu thay đổi...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Lưu thay đổi</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-white hover:bg-slate-50 text-xs font-semibold text-gray-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                <XCircle className="w-3.5 h-3.5 text-gray-400" />
+                <span>Hủy</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAvatarClick}
+                disabled={isUploading || isSaving}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-gray-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50 sm:ml-auto"
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-burgundy" />
+                    <span>Đang tải ảnh...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-3.5 h-3.5 text-burgundy" />
+                    <span>Đổi ảnh đại diện</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       {/* 3 Tabs Container */}
