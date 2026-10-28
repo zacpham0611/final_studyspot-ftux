@@ -151,10 +151,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="flex-1 overflow-y-auto p-4 sm:p-8 pt-20 md:pt-8 pb-8 sm:pb-8">
         <motion.div
           key={pathname}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.25 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
           className="max-w-6xl mx-auto space-y-6"
         >
           {children}

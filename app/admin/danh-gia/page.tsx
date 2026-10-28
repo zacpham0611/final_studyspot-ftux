@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { store } from '@/lib/data/store';
 import { Review, ReviewReport, Place } from '@/lib/types/database';
 import { useToast } from '@/components/common/Toast';
+import { AdminPortal } from '@/components/common/AdminPortal';
 import { matchesSearch } from '@/lib/utils/text';
 import { 
   Eye, 
@@ -653,7 +654,8 @@ export default function AdminReviewsPage() {
 
       {/* MODAL: REVIEW DETAIL */}
       {detailReview && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <AdminPortal isOpen={Boolean(detailReview)}>
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-xl w-full shadow-elevated border border-border max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
             {/* Sticky Header */}
             <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0 bg-white">
@@ -881,11 +883,13 @@ export default function AdminReviewsPage() {
             </div>
           </div>
         </div>
+        </AdminPortal>
       )}
 
       {/* CONFIRM DELETE MODAL */}
       {deleteTargetId && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <AdminPortal isOpen={Boolean(deleteTargetId)}>
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-elevated border border-border animate-in fade-in zoom-in-95">
             <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
               <AlertTriangle className="w-5 h-5" />
@@ -926,6 +930,7 @@ export default function AdminReviewsPage() {
             </div>
           </div>
         </div>
+        </AdminPortal>
       )}
     </div>
   );

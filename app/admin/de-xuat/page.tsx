@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { store } from '@/lib/data/store';
 import { Place } from '@/lib/types/database';
 import { useToast } from '@/components/common/Toast';
+import { AdminPortal } from '@/components/common/AdminPortal';
 import { 
   Check, 
   X, 
@@ -239,7 +240,8 @@ export default function AdminProposalsPage() {
       {/* SLIDE-OVER DRAWER WITH MAP & PHOTO REMOVAL */}
       <AnimatePresence>
         {activeDrawerPlace && (
-          <div className="fixed inset-0 z-50 overflow-hidden flex justify-end">
+          <AdminPortal isOpen={Boolean(activeDrawerPlace)}>
+            <div className="fixed inset-0 z-[60] overflow-hidden flex justify-end">
             {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -387,12 +389,14 @@ export default function AdminProposalsPage() {
               </div>
             </motion.div>
           </div>
+          </AdminPortal>
         )}
       </AnimatePresence>
 
       {/* REJECT MODAL (Requires Reason) */}
       {rejectModalPlace && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+        <AdminPortal isOpen={Boolean(rejectModalPlace)}>
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-elevated border border-border p-6 space-y-4">
             <div className="flex items-center gap-2.5 text-rose-600">
               <AlertCircle className="w-6 h-6" />
@@ -427,6 +431,7 @@ export default function AdminProposalsPage() {
             </div>
           </div>
         </div>
+        </AdminPortal>
       )}
     </div>
   );

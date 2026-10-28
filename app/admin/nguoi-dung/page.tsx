@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase/client';
 import { store } from '@/lib/data/store';
 import { UserProfile } from '@/lib/types/database';
 import { useToast } from '@/components/common/Toast';
+import { AdminPortal } from '@/components/common/AdminPortal';
 import { Lock, Unlock, Shield, User, Loader2, Trash2, AlertTriangle, X } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthContext';
 
@@ -311,7 +312,8 @@ export default function AdminUsersPage() {
 
       {/* Confirmation Modal for Permanent Account Deletion */}
       {deleteModalUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+        <AdminPortal isOpen={Boolean(deleteModalUser)}>
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-md w-full border border-border shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-200">
             <div className="flex items-start gap-3">
               <div className="p-2.5 rounded-xl bg-rose-100 text-rose-600 flex-shrink-0">
@@ -410,6 +412,7 @@ export default function AdminUsersPage() {
             </div>
           </div>
         </div>
+        </AdminPortal>
       )}
     </div>
   );

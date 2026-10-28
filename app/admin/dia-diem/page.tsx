@@ -6,6 +6,7 @@ import { Place, Category, OpeningHours, Amenity } from '@/lib/types/database';
 import { WEEK_DAYS, ALL_DAY_KEYS, getOpenDaysFromHours, getDayIntervals, TimeInterval } from '@/lib/utils/hours';
 import { PRICE_RANGE_OPTIONS, calculatePriceLevel, getPriceRangesFromPlace } from '@/lib/utils/price';
 import { useToast } from '@/components/common/Toast';
+import { AdminPortal } from '@/components/common/AdminPortal';
 import { 
   MapPin, 
   Search, 
@@ -724,7 +725,8 @@ export default function AdminPlacesPage() {
 
       {/* FULL IMAGE CONTROLS MODAL */}
       {imageModalPlace && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+        <AdminPortal isOpen={Boolean(imageModalPlace)}>
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-2xl rounded-2xl shadow-elevated border border-border p-6 max-h-[90vh] flex flex-col space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-border flex-shrink-0">
               <div>
@@ -821,11 +823,13 @@ export default function AdminPlacesPage() {
             </div>
           </div>
         </div>
+        </AdminPortal>
       )}
 
       {/* MODAL ADD NEW PLACE DIRECTLY */}
       {isAddPlaceOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+        <AdminPortal isOpen={isAddPlaceOpen}>
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-xl rounded-2xl shadow-elevated border border-border max-h-[90vh] flex flex-col overflow-hidden">
             {/* Sticky Header */}
             <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0 bg-white">
@@ -1197,11 +1201,13 @@ export default function AdminPlacesPage() {
             </form>
           </div>
         </div>
+        </AdminPortal>
       )}
 
       {/* EDIT PLACE MODAL */}
       {editModalPlace && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+        <AdminPortal isOpen={Boolean(editModalPlace)}>
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-xl rounded-2xl shadow-elevated border border-border max-h-[90vh] flex flex-col overflow-hidden">
             {/* Sticky Header */}
             <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0 bg-white">
@@ -1570,6 +1576,7 @@ export default function AdminPlacesPage() {
             </form>
           </div>
         </div>
+        </AdminPortal>
       )}
     </div>
   );
