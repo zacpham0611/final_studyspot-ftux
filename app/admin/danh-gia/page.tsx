@@ -414,7 +414,7 @@ export default function AdminReviewsPage() {
           {/* Table Container */}
           <div className="bg-white rounded-2xl border border-border shadow-soft overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-gray-600">
+              <table className="w-full min-w-[760px] text-left text-xs text-gray-600">
                 <thead className="bg-slate-50 border-b border-border text-gray-700 font-bold uppercase tracking-wider text-[10px]">
                   <tr>
                     <th className="py-3 px-4">Người viết</th>
@@ -654,20 +654,25 @@ export default function AdminReviewsPage() {
       {/* MODAL: REVIEW DETAIL */}
       {detailReview && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-elevated border border-border max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-border pb-3">
+          <div className="bg-white rounded-2xl max-w-xl w-full shadow-elevated border border-border max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Sticky Header */}
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0 bg-white">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-burgundy" />
                 <h3 className="font-extrabold text-base text-gray-900">Chi tiết đánh giá</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setDetailReview(null)}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-slate-100"
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-slate-100 transition-colors"
+                aria-label="Đóng"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Scrollable Body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-5 text-xs">
 
             {/* Reviewer & Place */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-border text-xs">
@@ -833,9 +838,12 @@ export default function AdminReviewsPage() {
               </div>
             )}
 
-            {/* Modal Actions */}
-            <div className="flex items-center justify-between pt-3 border-t border-border">
+            </div>
+
+            {/* Sticky Footer Actions */}
+            <div className="px-6 py-3.5 border-t border-border bg-slate-50/80 flex items-center justify-between flex-shrink-0">
               <button
+                type="button"
                 onClick={() => setDeleteTargetId(detailReview.id)}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 flex items-center gap-1.5 transition-colors"
               >
@@ -844,6 +852,7 @@ export default function AdminReviewsPage() {
 
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => handleToggleHide(detailReview.id)}
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 transition-colors ${
                     detailReview.is_hidden
@@ -862,6 +871,7 @@ export default function AdminReviewsPage() {
                   )}
                 </button>
                 <button
+                  type="button"
                   onClick={() => setDetailReview(null)}
                   className="px-4 py-2 rounded-xl border border-border text-xs font-semibold text-gray-700 hover:bg-slate-100 transition-colors"
                 >

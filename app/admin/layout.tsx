@@ -79,15 +79,25 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           className="p-1.5 text-gray-600 hover:text-burgundy rounded-lg hover:bg-slate-100"
+          aria-label={mobileMenuOpen ? "Đóng menu" : "Mở menu"}
         >
           {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
       </div>
 
+      {/* Mobile Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/40 backdrop-blur-xs z-40 transition-opacity"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-label="Đóng menu điều hướng"
+        />
+      )}
+
       {/* Admin Sidebar (Desktop fixed, Mobile Drawer) */}
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-40 w-64 bg-white border-r border-border flex flex-col justify-between p-4 shadow-soft transform transition-transform duration-200 md:translate-x-0 ${
-          mobileMenuOpen ? 'translate-x-0 top-16' : '-translate-x-full md:translate-x-0'
+        className={`fixed md:static top-16 md:top-0 bottom-0 left-0 z-50 md:z-auto w-64 bg-white border-r border-border flex flex-col justify-between p-4 shadow-soft transform transition-transform duration-200 md:translate-x-0 ${
+          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
         <div className="space-y-6">
@@ -138,7 +148,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main Admin Content Container with Framer Motion */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-8 pt-16 md:pt-8">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-8 pt-20 md:pt-8 pb-8 sm:pb-8">
         <motion.div
           key={pathname}
           initial={{ opacity: 0, y: 10 }}

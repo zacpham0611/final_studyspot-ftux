@@ -617,7 +617,7 @@ export default function AdminPlacesPage() {
       {/* Places Table */}
       <div className="bg-white rounded-2xl border border-border shadow-soft overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-gray-600">
+          <table className="w-full min-w-[720px] text-left text-xs text-gray-600">
             <thead className="bg-slate-50 border-b border-border text-gray-700 font-bold uppercase tracking-wider text-[10px]">
               <tr>
                 <th className="py-3 px-4">Ảnh & Tên quán</th>
@@ -826,15 +826,23 @@ export default function AdminPlacesPage() {
       {/* MODAL ADD NEW PLACE DIRECTLY */}
       {isAddPlaceOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-elevated border border-border p-6 max-h-[90vh] flex flex-col space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-border">
+          <div className="bg-white w-full max-w-xl rounded-2xl shadow-elevated border border-border max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Sticky Header */}
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0 bg-white">
               <h3 className="font-bold text-base text-gray-900">+ Thêm địa điểm mới trực tiếp</h3>
-              <button onClick={() => setIsAddPlaceOpen(false)} className="text-gray-400 hover:text-gray-600">
+              <button
+                type="button"
+                onClick={() => setIsAddPlaceOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                aria-label="Đóng"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreatePlace} className="space-y-4 overflow-y-auto flex-1 pr-1">
+            <form onSubmit={handleCreatePlace} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              {/* Scrollable Body */}
+              <div className="p-6 overflow-y-auto flex-1 space-y-4 text-xs">
               <div>
                 <label className="text-xs font-bold text-gray-700 block mb-1">Tên địa điểm *</label>
                 <input
@@ -1168,17 +1176,20 @@ export default function AdminPlacesPage() {
                 </select>
               </div>
 
-              <div className="flex gap-2 justify-end pt-2">
+              </div>
+
+              {/* Sticky Footer */}
+              <div className="px-6 py-3.5 border-t border-border bg-slate-50/80 flex items-center justify-end gap-2.5 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsAddPlaceOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs text-gray-600 hover:bg-slate-100"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-600 hover:bg-slate-100 transition-colors"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover"
+                  className="px-5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover shadow-sm transition-colors"
                 >
                   Xuất bản ngay
                 </button>
@@ -1191,26 +1202,31 @@ export default function AdminPlacesPage() {
       {/* EDIT PLACE MODAL */}
       {editModalPlace && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-elevated border border-border p-6 max-h-[90vh] overflow-y-auto space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <div className="flex items-center gap-2">
+          <div className="bg-white w-full max-w-xl rounded-2xl shadow-elevated border border-border max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Sticky Header */}
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0 bg-white">
+              <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-burgundy-light text-burgundy flex items-center justify-center font-bold">
                   <Edit3 className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-gray-900">Sửa thông tin địa điểm</h3>
-                  <p className="text-[11px] text-gray-400">ID: {editModalPlace.id}</p>
+                  <h3 className="font-bold text-base text-gray-900 leading-tight">Sửa thông tin địa điểm</h3>
+                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">ID: {editModalPlace.id}</p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setEditModalPlace(null)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                aria-label="Đóng"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
+            <form onSubmit={handleSaveEdit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              {/* Scrollable Body */}
+              <div className="p-6 overflow-y-auto flex-1 space-y-4 text-xs">
               <div>
                 <label className="text-xs font-bold text-gray-700 block mb-1">Tên địa điểm *</label>
                 <input
@@ -1531,19 +1547,22 @@ export default function AdminPlacesPage() {
                 </div>
               </div>
 
-              <div className="flex gap-2 justify-end pt-3 border-t border-border">
+              </div>
+
+              {/* Sticky Footer */}
+              <div className="px-6 py-3.5 border-t border-border bg-slate-50/80 flex items-center justify-end gap-2.5 flex-shrink-0">
                 <button
                   type="button"
                   disabled={isSavingEdit}
                   onClick={() => setEditModalPlace(null)}
-                  className="px-4 py-2 rounded-xl text-xs text-gray-600 hover:bg-slate-100 font-semibold disabled:opacity-50"
+                  className="px-4 py-2 rounded-xl text-xs text-gray-600 hover:bg-slate-100 font-semibold disabled:opacity-50 transition-colors"
                 >
                   Hủy bỏ
                 </button>
                 <button
                   type="submit"
                   disabled={isSavingEdit}
-                  className="px-5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover shadow-sm disabled:opacity-70 flex items-center gap-1.5"
+                  className="px-5 py-2 rounded-xl bg-burgundy text-white text-xs font-bold hover:bg-burgundy-hover shadow-sm disabled:opacity-70 flex items-center gap-1.5 transition-colors"
                 >
                   {isSavingEdit ? 'Đang lưu vào Supabase...' : 'Lưu thay đổi'}
                 </button>

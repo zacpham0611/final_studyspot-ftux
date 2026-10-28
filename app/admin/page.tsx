@@ -134,18 +134,18 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* SVG/HTML Bar Chart */}
-        <div className="overflow-x-auto no-scrollbar pt-2">
-          <div className="min-w-[600px] h-44 flex items-end justify-between gap-2 border-b border-border px-2 pb-1">
+        <div className="overflow-x-auto no-scrollbar pt-12 pb-2">
+          <div className="min-w-[600px] h-44 flex items-end justify-between gap-2 border-b border-border px-4 pb-1">
             {activityDays.map((d, idx) => {
               const checkinHeight = ((d.checkins / maxActivity) * 100);
               const reviewHeight = ((d.reviews / maxActivity) * 100);
 
               return (
                 <div key={idx} className="flex-1 flex flex-col items-center gap-1 h-full justify-end group relative">
-                  {/* Tooltip */}
-                  <div className="absolute -top-10 bg-gray-900 text-white text-[10px] font-bold py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                    {d.label}: {d.checkins} check-in, {d.reviews} review
-                  </div>
+                  {/* Tooltip with guaranteed clearance from overflow container */}
+                  <div className={`absolute -top-9 bg-gray-900 text-white text-[10px] font-bold py-1 px-2.5 rounded-md shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20 ${
+                    idx === 0 ? 'left-0' : idx === activityDays.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2'
+                  }`}>{d.label}: {d.checkins} check-in, {d.reviews} review</div>
 
                   {/* Dual Bars */}
                   <div className="w-full flex items-end justify-center gap-1 h-full">
@@ -163,7 +163,7 @@ export default function AdminDashboardPage() {
             })}
           </div>
 
-          <div className="min-w-[600px] flex justify-between text-[10px] text-gray-400 pt-2 px-2 font-mono">
+          <div className="min-w-[600px] flex justify-between text-[10px] text-gray-400 pt-2 px-4 font-mono">
             {activityDays.map((d, idx) => (
               <span key={idx} className="w-8 text-center">{d.label}</span>
             ))}

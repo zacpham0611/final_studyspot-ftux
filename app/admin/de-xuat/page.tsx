@@ -149,7 +149,7 @@ export default function AdminProposalsPage() {
         /* PROPOSALS TABLE */
         <div className="bg-white rounded-2xl border border-border shadow-soft overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-gray-600">
+            <table className="w-full min-w-[760px] text-left text-xs text-gray-600">
               <thead className="bg-slate-50 border-b border-border text-gray-700 font-bold uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="py-3 px-4">Ảnh & Tên địa điểm</th>
