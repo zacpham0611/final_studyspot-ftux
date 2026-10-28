@@ -10,6 +10,7 @@ import { Place, Review, Checkin } from '@/lib/types/database';
 import { ImageGallery } from '@/components/place/ImageGallery';
 import { CheckinModal } from '@/components/place/CheckinModal';
 import { ReviewModal } from '@/components/place/ReviewModal';
+import { ReviewItem } from '@/components/place/ReviewItem';
 import { HourlyCrowdChart } from '@/components/place/HourlyCrowdChart';
 import { SimilarPlaces } from '@/components/place/SimilarPlaces';
 import { useToast } from '@/components/common/Toast';
@@ -36,6 +37,7 @@ import {
   Bike, 
   Moon, 
   ArrowLeft,
+  ArrowRight,
   AlertCircle,
   Trash2,
   Edit2,
@@ -346,7 +348,17 @@ export default function PlaceDetailPage() {
   // Helpful button toggle
   const handleToggleHelpful = (revId: string) => {
     const res = store.toggleHelpfulReview(revId);
-    refreshData();
+    setReviews((prev) =>
+      prev.map((r) =>
+        r.id === revId
+          ? {
+              ...r,
+              helpful_count: res.count,
+              is_helpful_by_me: res.helpful,
+            }
+          : r
+      )
+    );
     showToast(res.helpful ? 'Đã thích đánh giá hữu ích!' : 'Đã bỏ thích đánh giá', 'info');
   };
 
@@ -392,12 +404,11 @@ export default function PlaceDetailPage() {
     setEditRating(rev.rating);
   };
 
-  const handleSaveEdit = async (revId: string) => {
+  const handleSaveEdit = async (revId: string, content: string, rating: number) => {
     try {
-      await supabase.from('reviews').update({ content: editContent, rating: editRating }).eq('id', revId);
+      await supabase.from('reviews').update({ content, rating }).eq('id', revId);
     } catch (e) {}
-    store.updateReview(revId, editContent, editRating);
-    setEditingReviewId(null);
+    store.updateReview(revId, content, rating);
     await refreshData();
     showToast('Cập nhật đánh giá thành công!', 'success');
   };
@@ -684,176 +695,40 @@ export default function PlaceDetailPage() {
               </div>
             </div>
 
-            {/* Filter by stars */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-              <span className="text-xs font-semibold text-gray-500 mr-1">Lọc:</span>
-              {(['all', 5, 4, 3, 2, 1] as (number | 'all')[]).map((starVal) => (
-                <button
-                  key={starVal}
-                  type="button"
-                  onClick={() => setSelectedStarFilter(starVal)}
-                  className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${
-                    selectedStarFilter === starVal
-                      ? 'bg-burgundy text-white font-bold'
-                      : 'bg-slate-100 text-gray-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {starVal === 'all' ? 'Tất cả' : `${starVal} ⭐`}
-                </button>
-              ))}
-            </div>
-
-            {/* Reviews List with Helpful & Report buttons */}
+            {/* Reviews List (Max 2 latest reviews on detail page) */}
             <div className="space-y-4">
-              {filteredReviews.length === 0 ? (
-                <p className="text-xs text-gray-500 py-6 text-center italic">
-                  Chưa có đánh giá nào cho mức sao này.
-                </p>
+              {activeReviews.length === 0 ? (
+                <div className="py-6 text-center space-y-2">
+                  <p className="text-xs text-gray-500 italic">
+                    Chưa có đánh giá nào từ cộng đồng FTU. Hãy là người đầu tiên chia sẻ cảm nhận về quán nhé!
+                  </p>
+                </div>
               ) : (
-                filteredReviews.map((rev) => {
-                  const isOwnReview = currentUser?.id === rev.user_id || currentUser?.role === 'admin';
-                  const isEditing = editingReviewId === rev.id;
+                activeReviews.slice(0, 2).map((rev) => (
+                  <ReviewItem
+                    key={rev.id}
+                    review={rev}
+                    currentUserId={currentUser?.id}
+                    isAdmin={currentUser?.role === 'admin'}
+                    onToggleHelpful={handleToggleHelpful}
+                    onReport={(r) => setReportReviewTarget(r)}
+                    onDelete={handleDeleteReview}
+                    onSaveEdit={handleSaveEdit}
+                  />
+                ))
+              )}
 
-                  return (
-                    <div
-                      key={rev.id}
-                      className="p-4 rounded-xl border border-border bg-white space-y-2 hover:border-gray-300 transition-colors"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={rev.user?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
-                            alt={rev.user?.full_name || 'User'}
-                            className="w-8 h-8 rounded-full object-cover ring-1 ring-burgundy/20"
-                          />
-                          <div>
-                            <div className="text-xs font-bold text-gray-900">
-                              {rev.user?.full_name || 'Sinh viên Ngoại thương'}
-                            </div>
-                            <div className="text-[10px] text-gray-400">
-                              {new Date(rev.created_at).toLocaleDateString('vi-VN')}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Stars */}
-                        <div className="flex items-center gap-1 text-amber-500">
-                          {[1, 2, 3, 4, 5].map((s) => (
-                            <Star
-                              key={s}
-                              className={`w-3.5 h-3.5 ${
-                                s <= (isEditing ? editRating : rev.rating)
-                                  ? 'fill-amber-400 text-amber-400'
-                                  : 'text-gray-300'
-                              }`}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Content or Edit Form */}
-                      {isEditing ? (
-                        <div className="space-y-2 pt-2">
-                          <div className="flex gap-1 mb-2">
-                            {[1, 2, 3, 4, 5].map((s) => (
-                              <button
-                                key={s}
-                                type="button"
-                                onClick={() => setEditRating(s)}
-                                className="p-1"
-                              >
-                                <Star
-                                  className={`w-5 h-5 ${
-                                    s <= editRating ? 'fill-amber-400 text-amber-400' : 'text-gray-300'
-                                  }`}
-                                />
-                              </button>
-                            ))}
-                          </div>
-                          <textarea
-                            rows={3}
-                            value={editContent}
-                            onChange={(e) => setEditContent(e.target.value)}
-                            className="w-full p-2.5 rounded-lg border border-border text-xs focus:outline-none focus:border-burgundy"
-                          />
-                          <div className="flex gap-2 justify-end">
-                            <button
-                              onClick={() => setEditingReviewId(null)}
-                              className="px-3 py-1 rounded text-xs text-gray-600 hover:bg-slate-100"
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              onClick={() => handleSaveEdit(rev.id)}
-                              className="px-3 py-1 rounded text-xs bg-burgundy text-white font-bold"
-                            >
-                              Lưu
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-700 leading-relaxed">{rev.content}</p>
-                      )}
-
-                      {/* Review image if present */}
-                      {rev.images && rev.images.length > 0 && !isEditing && (
-                        <div className="pt-1">
-                          <img
-                            src={rev.images[0]}
-                            alt="Review photo"
-                            className="w-24 h-24 rounded-lg object-cover border border-border"
-                          />
-                        </div>
-                      )}
-
-                      {/* Phase 1: Helpful button & Report button */}
-                      {!isEditing && (
-                        <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-xs">
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => handleToggleHelpful(rev.id)}
-                              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-colors ${
-                                rev.is_helpful_by_me
-                                  ? 'border-burgundy-border bg-burgundy-light text-burgundy'
-                                  : 'border-border text-gray-600 hover:bg-slate-50'
-                              }`}
-                            >
-                              <ThumbsUp className={`w-3.5 h-3.5 ${rev.is_helpful_by_me ? 'fill-burgundy' : ''}`} />
-                              <span>Hữu ích ({rev.helpful_count || 0})</span>
-                            </button>
-
-                            {!isOwnReview && (
-                              <button
-                                onClick={() => setReportReviewTarget(rev)}
-                                className="text-gray-400 hover:text-rose-600 text-xs font-medium flex items-center gap-1 transition-colors"
-                              >
-                                <Flag className="w-3.5 h-3.5" /> Báo cáo
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Edit / Delete actions for own review */}
-                          {isOwnReview && (
-                            <div className="flex items-center gap-3 text-[11px]">
-                              <button
-                                onClick={() => handleStartEdit(rev)}
-                                className="text-gray-500 hover:text-burgundy flex items-center gap-1"
-                              >
-                                <Edit2 className="w-3 h-3" /> Sửa
-                              </button>
-                              <button
-                                onClick={() => handleDeleteReview(rev.id)}
-                                className="text-rose-500 hover:text-rose-700 flex items-center gap-1"
-                              >
-                                <Trash2 className="w-3 h-3" /> Xóa
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
+              {/* View All Reviews Button */}
+              {activeReviewCount > 0 && (
+                <div className="pt-2 text-center">
+                  <Link
+                    href={`/dia-diem/${place.id}/danh-gia`}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl border border-burgundy/30 bg-burgundy/5 hover:bg-burgundy/10 text-burgundy text-xs font-bold transition-colors cursor-pointer shadow-xs"
+                  >
+                    <span>Xem tất cả đánh giá ({activeReviewCount})</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
               )}
             </div>
           </div>
